@@ -9,7 +9,9 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.IO.Pipes;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -32,6 +34,7 @@ static class Program
         if (a.Length >= 3 && a[0] == "/to") { RunCli(a); return; }
         if (a.Length == 3 && a[0] == "/setup")  // called by the installer
         {
+            Cfg.Save(); // marks settings as initialized, so first-run defaults don't override the installer's choice
             if (a[1] == "1") Shell.On(); else Shell.Off();
             Shell.AutoOn = a[2] == "1";
             return;
@@ -43,6 +46,7 @@ static class Program
         using (var ev = new EventWaitHandle(false, EventResetMode.AutoReset, "ImgConv.Show.7f3c1a"))
         {
             if (!first) { ev.Set(); return; }   // already running — just show its window
+            if (Cfg.FirstRun) { Shell.On(); Cfg.Save(); } // Explorer menu is on by default
             bool silent = Array.IndexOf(a, "/tray") >= 0;
             Application.Run(new TrayCtx(ev, !silent));
         }
@@ -77,17 +81,75 @@ static class Program
             { CreateNoWindow = true, UseShellExecute = false, WorkingDirectory = Path.GetTempPath() });
     }
 
+    const string BatchName = "ImgConv.Batch.7f3c1a";
+
     static void RunCli(string[] a)
     {
         string fmt = a[1].ToLowerInvariant();
-        var errs = new List<string>();
-        for (int i = 2; i < a.Length; i++)
+        var files = new List<string>();
+        for (int i = 2; i < a.Length; i++) files.Add(a[i]);
+
+        // Explorer starts one process per selected file. The first one collects the rest,
+        // so the user gets a single dialog for the whole selection.
+        bool leader;
+        using (var mx = new Mutex(true, BatchName, out leader))
         {
-            try { Conv.Run(a[i], fmt, Cfg.Quality, Cfg.TargetKB, Cfg.MaxSide); }
-            catch (Exception ex) { errs.Add(Path.GetFileName(a[i]) + ": " + ex.Message); }
+            if (!leader) { if (SendToLeader(files)) return; }
+            else CollectFollowers(files);
+        }
+
+        if (Cfg.Ask)
+            using (var f = new AskForm(fmt, files.Count))
+                if (f.ShowDialog() != DialogResult.OK) return;
+
+        var errs = new List<string>();
+        foreach (var file in files)
+        {
+            try { Conv.Run(file, fmt, Cfg.Quality, Cfg.TargetKB, Cfg.MaxSide); }
+            catch (Exception ex) { errs.Add(Path.GetFileName(file) + ": " + ex.Message); }
         }
         if (errs.Count > 0)
-            MessageBox.Show(string.Join("\n", errs), "ImgConv — error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(string.Join("\n", errs.Count > 15 ? errs.GetRange(0, 15) : errs), "ImgConv — error",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
+
+    static bool SendToLeader(List<string> files)
+    {
+        try
+        {
+            using (var c = new NamedPipeClientStream(".", BatchName, PipeDirection.Out))
+            {
+                c.Connect(2000);
+                byte[] b = Encoding.UTF8.GetBytes(string.Join("\n", files) + "\n");
+                c.Write(b, 0, b.Length);
+                c.Flush();
+            }
+            return true;
+        }
+        catch (Exception) { return false; } // leader is gone — handle these files ourselves
+    }
+
+    static void CollectFollowers(List<string> files)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 15000)
+        {
+            var s = new NamedPipeServerStream(BatchName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            try
+            {
+                var ar = s.BeginWaitForConnection(null, null);
+                if (!ar.AsyncWaitHandle.WaitOne(500)) return; // nobody else for 0.5 s — the batch is complete
+                s.EndWaitForConnection(ar);
+                using (var r = new StreamReader(s, Encoding.UTF8))
+                {
+                    string l;
+                    while ((l = r.ReadLine()) != null)
+                        if (l.Length > 0 && !files.Contains(l)) files.Add(l);
+                }
+            }
+            catch (Exception) { return; }
+            finally { s.Dispose(); }
+        }
     }
 }
 
@@ -97,20 +159,23 @@ static class Cfg
     const string Key = @"Software\ImgConv";
     public static readonly string[] Formats = { "jpg", "png", "bmp", "gif", "tiff" };
     public static string Format = "jpg";
-    public static int Quality = 90;
-    public static int TargetKB = 0;  // 0 = no limit
-    public static int MaxSide = 0;   // 0 = original size
+    public static int Quality = 100;
+    public static int TargetKB = 490; // 0 = no limit
+    public static int MaxSide = 0;    // 0 = original size
+    public static bool Ask = true;    // show the size/quality dialog for Explorer conversions
+    public static bool FirstRun;
 
     public static void Load()
     {
         using (var k = Registry.CurrentUser.OpenSubKey(Key))
         {
-            if (k == null) return;
+            if (k == null) { FirstRun = true; return; }
             var f = k.GetValue("Format") as string;
             if (f != null && Array.IndexOf(Formats, f) >= 0) Format = f;
             Quality = Get(k, "Quality", 1, 100, Quality);
-            TargetKB = Get(k, "TargetKB", 0, 10000000, 0);
+            TargetKB = Get(k, "TargetKB", 0, 10000000, TargetKB);
             MaxSide = Get(k, "MaxSide", 0, 100000, 0);
+            Ask = Get(k, "Ask", 0, 1, 1) == 1;
         }
     }
 
@@ -128,12 +193,15 @@ static class Cfg
             k.SetValue("Quality", Quality, RegistryValueKind.DWord);
             k.SetValue("TargetKB", TargetKB, RegistryValueKind.DWord);
             k.SetValue("MaxSide", MaxSide, RegistryValueKind.DWord);
+            k.SetValue("Ask", Ask ? 1 : 0, RegistryValueKind.DWord);
         }
+        FirstRun = false;
         if (Shell.IsOn) Shell.On(); // refresh labels in the Explorer menu
     }
 
     public static string Hint()
     {
+        if (Ask) return "…"; // a dialog follows
         var p = new List<string>();
         if (TargetKB > 0) p.Add("≤ " + TargetKB + " KB");
         if (MaxSide > 0) p.Add("≤ " + MaxSide + " px");
@@ -401,13 +469,8 @@ class TrayCtx : ApplicationContext
         ui = new WindowsFormsSynchronizationContext();
 
         var menu = new ContextMenu(); // native Win32 menu — lighter than ContextMenuStrip
-        var open = new MenuItem("Open converter", (s, e) => ShowForm()) { DefaultItem = true };
-        var shell = new MenuItem("Explorer right-click menu");
-        shell.Click += (s, e) => { if (Shell.IsOn) Shell.Off(); else Shell.On(); };
-        var auto = new MenuItem("Start with Windows");
-        auto.Click += (s, e) => Shell.AutoOn = !Shell.AutoOn;
-        menu.Popup += (s, e) => { shell.Checked = Shell.IsOn; auto.Checked = Shell.AutoOn; };
-        menu.MenuItems.AddRange(new[] { open, new MenuItem("-"), shell, auto, new MenuItem("-"),
+        var open = new MenuItem("Open ImgConv", (s, e) => ShowForm()) { DefaultItem = true };
+        menu.MenuItems.AddRange(new[] { open, new MenuItem("-"),
             new MenuItem("Exit", (s, e) => { tray.Visible = false; Application.Exit(); }) });
 
         tray = new NotifyIcon { Icon = Art.SmallIcon, Text = "ImgConv — image converter", ContextMenu = menu, Visible = true };
@@ -459,7 +522,7 @@ class MainForm : Form
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(S(340), S(300));
+        ClientSize = new Size(S(340), S(396));
         AllowDrop = true;
 
         drop = new Label
@@ -485,14 +548,25 @@ class MainForm : Form
         q = Num(164, 1, 100, Cfg.Quality);
 
         useKb = Check("Max file size, KB", 194, Cfg.TargetKB > 0);
-        kb = Num(194, 1, 10000000, Cfg.TargetKB > 0 ? Cfg.TargetKB : 500);
+        kb = Num(194, 1, 10000000, Cfg.TargetKB > 0 ? Cfg.TargetKB : 490);
 
         useSide = Check("Max long side, px", 224, Cfg.MaxSide > 0);
         side = Num(224, 16, 100000, Cfg.MaxSide > 0 ? Cfg.MaxSide : 1920);
 
-        status = new Label { Bounds = new Rectangle(S(12), S(256), S(316), S(36)), ForeColor = Color.DimGray,
+        status = new Label { Bounds = new Rectangle(S(12), S(256), S(316), S(20)), ForeColor = Color.DimGray,
                              Text = "Results are saved next to the originals." };
         Controls.Add(status);
+
+        // ---- Settings ----
+        Controls.Add(new Label { Bounds = new Rectangle(S(12), S(284), S(316), 1), BorderStyle = BorderStyle.Fixed3D });
+        Controls.Add(new Label { Text = "Settings", AutoSize = true, Location = new Point(S(12), S(292)),
+                                 Font = new Font("Segoe UI Semibold", 9f) });
+        var cShell = Check("Add \"Convert to\" to the Explorer right-click menu", 312, Shell.IsOn);
+        var cAsk = Check("Ask size and quality when converting from Explorer", 336, Cfg.Ask);
+        var cAuto = Check("Start with Windows (in the tray)", 360, Shell.AutoOn);
+        cShell.CheckedChanged += (s, e) => { if (cShell.Checked) Shell.On(); else Shell.Off(); };
+        cAsk.CheckedChanged += (s, e) => { Cfg.Ask = cAsk.Checked; Cfg.Save(); };
+        cAuto.CheckedChanged += (s, e) => Shell.AutoOn = cAuto.Checked;
 
         EventHandler sync = (s, e) => { q.Enabled = fmt.SelectedIndex == 0; kb.Enabled = useKb.Checked; side.Enabled = useSide.Checked; };
         fmt.SelectedIndexChanged += sync; useKb.CheckedChanged += sync; useSide.CheckedChanged += sync;
@@ -589,6 +663,62 @@ class MainForm : Form
     void Ui(Action a)
     {
         try { if (!IsDisposed && IsHandleCreated) BeginInvoke(a); } catch (InvalidOperationException) { }
+    }
+}
+
+// ---------- Small "size and quality" dialog for Explorer conversions ----------
+class AskForm : Form
+{
+    public AskForm(string fmt, int count)
+    {
+        float k;
+        using (var g = CreateGraphics()) k = g.DpiX / 96f;
+        Func<int, int> S = v => (int)Math.Round(v * k);
+        bool jpg = fmt == "jpg";
+
+        Text = "ImgConv";
+        Icon = Art.SmallIcon;
+        Font = new Font("Segoe UI", 9f);
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen;
+        TopMost = true;
+        ClientSize = new Size(S(300), S(176));
+
+        Controls.Add(new Label
+        {
+            Text = "Convert " + (count == 1 ? "1 image" : count + " images") + " to " + fmt.ToUpperInvariant(),
+            AutoSize = true, Location = new Point(S(12), S(12)), Font = new Font("Segoe UI Semibold", 10f),
+        });
+
+        var useKb = new CheckBox { Text = "Max file size, KB", Checked = Cfg.TargetKB > 0, AutoSize = true, Location = new Point(S(12), S(48)) };
+        var kb = new NumericUpDown { Minimum = 1, Maximum = 10000000, Value = Cfg.TargetKB > 0 ? Cfg.TargetKB : 490,
+            Bounds = new Rectangle(S(190), S(46), S(98), S(24)), TextAlign = HorizontalAlignment.Right };
+        useKb.CheckedChanged += (s, e) => kb.Enabled = useKb.Checked;
+        kb.Enabled = useKb.Checked;
+
+        var qLabel = new Label { Text = jpg ? "Quality, %" : "Quality (JPG only)", AutoSize = true, Location = new Point(S(12), S(81)) };
+        var q = new NumericUpDown { Minimum = 1, Maximum = 100, Value = Cfg.Quality, Enabled = jpg,
+            Bounds = new Rectangle(S(190), S(78), S(98), S(24)), TextAlign = HorizontalAlignment.Right };
+
+        var noAsk = new CheckBox { Text = "Don't ask again", AutoSize = true, Location = new Point(S(12), S(146)) };
+
+        var ok = new Button { Text = "Convert", Bounds = new Rectangle(S(196), S(110), S(92), S(28)), DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Cancel", Bounds = new Rectangle(S(96), S(110), S(92), S(28)), DialogResult = DialogResult.Cancel };
+        Controls.AddRange(new Control[] { useKb, kb, qLabel, q, noAsk, ok, cancel });
+        AcceptButton = ok;
+        CancelButton = cancel;
+        ActiveControl = ok;
+
+        FormClosing += (s, e) =>
+        {
+            if (DialogResult != DialogResult.OK) return;
+            Cfg.TargetKB = useKb.Checked ? (int)kb.Value : 0;
+            if (jpg) Cfg.Quality = (int)q.Value;
+            if (noAsk.Checked) Cfg.Ask = false;
+            Cfg.Save(); // remember for next time
+        };
+        Shown += (s, e) => Activate();
     }
 }
 

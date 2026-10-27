@@ -16,7 +16,9 @@ Every form on the internet wants something different: "JPG only", "max 2 MB", "m
 - **Reads** JPG, PNG, BMP, GIF, TIFF, ICO, plus WebP / HEIC / AVIF through the codecs Windows already has.
 - **Target file size** — set "no larger than N KB" and ImgConv finds the best JPG quality that fits. If even quality 30 is too big, it downscales the image instead of turning it into mush.
 - **Max long side** in pixels (e.g. 1920).
-- **Right-click menu in Explorer**: *Convert to → JPG / PNG / …* — uses your saved settings, and the current limit is shown right in the menu label.
+- **Right-click menu in Explorer** (on by default): *Convert to → JPG / PNG / …* — a small dialog asks the max size and quality (defaults: **490 KB, quality 100**). Select 20 photos → still one dialog. You can turn the dialog off to convert instantly with saved settings.
+
+  ![Size and quality dialog](docs/ask.png)
 - Drag & drop files or whole folders. Respects EXIF rotation. Transparent PNGs get a white background in JPG.
 - Originals are never touched: the result is saved next to the source (`photo.jpg`, `photo (1).jpg`, …).
 
@@ -47,9 +49,8 @@ Silent install: `ImgConv-Setup.exe /S`
 
 ## Usage
 
-- **Left-click the tray icon** → window. Drop photos in, or click to pick files.
-- **Right-click a photo in Explorer** → *Convert to* → format. On Windows 11 it's under *Show more options* (or Shift+F10).
-- **Right-click the tray icon** → toggle the Explorer menu entry and autostart.
+- **Click the tray icon** → window. Drop photos in, or click to pick files. Settings (Explorer menu, the size/quality dialog, autostart) are at the bottom of the window.
+- **Right-click photos in Explorer** → *Convert to* → format. On Windows 11 it's under *Show more options* (or Shift+F10).
 
 Command line: `ImgConv.exe /to jpg "C:\path\photo.png"` — converts using saved settings and exits.
 
