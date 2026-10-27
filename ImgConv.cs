@@ -26,6 +26,12 @@ static class Program
     {
         SetProcessDPIAware();
         if (a.Length == 2 && a[0] == "/mkico") { Art.WriteIco(a[1]); return; }
+        if (a.Length == 3 && a[0] == "/mkpng") // package logo, used at build time
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(a[1])));
+            using (var b = Art.Draw(int.Parse(a[2]))) b.Save(a[1], ImageFormat.Png);
+            return;
+        }
 
         Cfg.Load();
         Application.EnableVisualStyles();
@@ -63,6 +69,7 @@ static class Program
 
         Shell.Off();
         Shell.AutoOn = false;
+        Win11Menu.Unregister();
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\ImgConv", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\ImgConv", false);
         foreach (var sf in new[] { Environment.SpecialFolder.Programs, Environment.SpecialFolder.DesktopDirectory })
@@ -75,6 +82,7 @@ static class Program
 
         // Delete the exe folder after this process exits.
         string dir = Path.GetDirectoryName(Application.ExecutablePath);
+        Win11Menu.MoveAwayDll(dir); // Explorer may still have it loaded
         if (string.Equals(Path.GetFileName(dir), "ImgConv", StringComparison.OrdinalIgnoreCase))
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe",
                 "/c ping 127.0.0.1 -n 3 >nul & rmdir /s /q \"" + dir + "\"")
@@ -402,12 +410,32 @@ static class Shell
     const string Base = @"Software\Classes\SystemFileAssociations\image\shell\ImgConv";
     const string Run = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
-    public static bool IsOn { get { using (var k = Registry.CurrentUser.OpenSubKey(Base)) return k != null; } }
+    // The "Menu" flag drives both menus: the classic one (registry verbs below)
+    // and the Windows 11 one (ImgConvMenu.dll reads the flag and hides itself).
+    public static bool IsOn
+    {
+        get
+        {
+            using (var k = Registry.CurrentUser.OpenSubKey(@"Software\ImgConv"))
+            {
+                object v = k == null ? null : k.GetValue("Menu");
+                if (v is int) return (int)v != 0;
+            }
+            using (var k = Registry.CurrentUser.OpenSubKey(Base)) return k != null;
+        }
+    }
+
+    static void SetFlag(bool on)
+    {
+        using (var k = Registry.CurrentUser.CreateSubKey(@"Software\ImgConv"))
+            k.SetValue("Menu", on ? 1 : 0, RegistryValueKind.DWord);
+    }
 
     public static void On()
     {
         string exe = Application.ExecutablePath;
-        Off();
+        Registry.CurrentUser.DeleteSubKeyTree(Base, false);
+        SetFlag(true);
         using (var k = Registry.CurrentUser.CreateSubKey(Base))
         {
             k.SetValue("MUIVerb", "Convert to");
@@ -427,7 +455,7 @@ static class Shell
         }
     }
 
-    public static void Off() { Registry.CurrentUser.DeleteSubKeyTree(Base, false); }
+    public static void Off() { Registry.CurrentUser.DeleteSubKeyTree(Base, false); SetFlag(false); }
 
     public static bool AutoOn
     {
@@ -440,6 +468,95 @@ static class Shell
                 else k.DeleteValue("ImgConv", false);
             }
         }
+    }
+}
+
+// ---------- Windows 11 context menu (signed sparse MSIX + ImgConvMenu.dll) ----------
+static class Win11Menu
+{
+    public const string Package = "ImgConv.ContextMenu";
+
+    public static bool Supported
+    {
+        get
+        {
+            using (var k = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+            {
+                int build;
+                return k != null && int.TryParse(k.GetValue("CurrentBuildNumber") as string, out build) && build >= 22000;
+            }
+        }
+    }
+
+    // Returns null on success, otherwise a short reason.
+    public static string Register(string dir)
+    {
+        string msix = Path.Combine(dir, "ImgConv.msix"), cer = Path.Combine(dir, "ImgConv.cer");
+        if (!File.Exists(msix) || !File.Exists(cer)) return "package files are missing";
+        if (!CertTrusted(cer) && !TrustCert(cer)) return "administrator permission was not given";
+        string err = PowerShell("Get-AppxPackage " + Package + " | Remove-AppxPackage; " +
+                                "Add-AppxPackage -Path " + Quote(msix) + " -ExternalLocation " + Quote(dir));
+        return err.Length == 0 ? null : err;
+    }
+
+    public static void Unregister() { PowerShell("Get-AppxPackage " + Package + " | Remove-AppxPackage"); }
+
+    // Explorer keeps the DLL loaded, so it can't be overwritten or deleted — but it can be renamed.
+    public static void MoveAwayDll(string dir)
+    {
+        string dll = Path.Combine(dir, "ImgConvMenu.dll");
+        foreach (var old in Directory.GetFiles(dir, "ImgConvMenu.dll.old*"))
+            try { File.Delete(old); } catch (Exception) { }
+        if (!File.Exists(dll)) return;
+        try { File.Move(dll, Path.Combine(Path.GetTempPath(), "ImgConvMenu-" + Guid.NewGuid().ToString("N") + ".dll")); }
+        catch (Exception) { File.Move(dll, dll + ".old" + DateTime.Now.Ticks); }
+    }
+
+    static bool CertTrusted(string cer)
+    {
+        var c = new System.Security.Cryptography.X509Certificates.X509Certificate2(cer);
+        var store = new System.Security.Cryptography.X509Certificates.X509Store(
+            System.Security.Cryptography.X509Certificates.StoreName.TrustedPeople,
+            System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine);
+        store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
+        try { return store.Certificates.Find(System.Security.Cryptography.X509Certificates.X509FindType.FindByThumbprint, c.Thumbprint, false).Count > 0; }
+        finally { store.Close(); }
+    }
+
+    // Adds the public certificate to "Trusted People" — the one step that needs admin (UAC prompt).
+    static bool TrustCert(string cer)
+    {
+        try
+        {
+            using (var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("certutil.exe",
+                "-f -addstore TrustedPeople \"" + cer + "\"")
+                { Verb = "runas", UseShellExecute = true, WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden }))
+            {
+                p.WaitForExit();
+                return p.ExitCode == 0;
+            }
+        }
+        catch (Exception) { return false; } // UAC declined
+    }
+
+    static string Quote(string s) { return "'" + s.Replace("'", "''") + "'"; }
+
+    static string PowerShell(string script)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+            "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; " + script.Replace("\"", "\\\"") + "\"")
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+        try
+        {
+            using (var p = System.Diagnostics.Process.Start(psi))
+            {
+                p.StandardOutput.ReadToEnd();
+                string err = p.StandardError.ReadToEnd().Trim();
+                p.WaitForExit();
+                return p.ExitCode == 0 ? "" : (err.Length > 0 ? err : "PowerShell exit code " + p.ExitCode);
+            }
+        }
+        catch (Exception ex) { return ex.Message; }
     }
 }
 

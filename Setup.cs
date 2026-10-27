@@ -1,4 +1,4 @@
-// ImgConv installer. ImgConv.exe is embedded as a resource.
+﻿// ImgConv installer. ImgConv.exe is embedded as a resource.
 // Installs to %LOCALAPPDATA%\Programs\ImgConv — no admin rights needed.
 // Silent install: ImgConv-Setup.exe /S
 using System;
@@ -20,7 +20,8 @@ static class SetupApp
         SetProcessDPIAware();
         if (a.Length > 0 && a[0].ToUpperInvariant() == "/S")
         {
-            try { Installer.Run(Installer.DefaultDir, true, false, true, true); return 0; }
+            string note;
+            try { Installer.Run(Installer.DefaultDir, true, false, true, true, Installer.CanWin11, out note); return 0; }
             catch (Exception) { return 1; }
         }
         Application.EnableVisualStyles();
@@ -32,7 +33,7 @@ static class SetupApp
 
 static class Installer
 {
-    public const string Version = "1.0";
+    public const string Version = "1.1";
     const string UninstKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\ImgConv";
 
     public static string DefaultDir
@@ -49,8 +50,19 @@ static class Installer
 
     public static bool Installed { get { using (var k = Registry.CurrentUser.OpenSubKey(UninstKey)) return k != null; } }
 
-    public static string Run(string dir, bool startMenu, bool desktop, bool shellMenu, bool autorun)
+    // The Windows 11 menu parts are bundled only when build.ps1 found the C++ compiler and Windows SDK.
+    static bool HasResource(string name) { return Assembly.GetExecutingAssembly().GetManifestResourceInfo(name) != null; }
+    public static bool CanWin11 { get { return Win11Menu.Supported && HasResource("ImgConv.msix"); } }
+
+    static void Extract(string name, string dir)
     {
+        using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+        using (var f = File.Create(Path.Combine(dir, name))) s.CopyTo(f);
+    }
+
+    public static string Run(string dir, bool startMenu, bool desktop, bool shellMenu, bool autorun, bool win11, out string win11Note)
+    {
+        win11Note = null;
         dir = Path.GetFullPath(dir);
         if (!string.Equals(Path.GetFileName(dir), "ImgConv", StringComparison.OrdinalIgnoreCase))
             dir = Path.Combine(dir, "ImgConv");
@@ -61,8 +73,12 @@ static class Installer
 
         Directory.CreateDirectory(dir);
         string exe = Path.Combine(dir, "ImgConv.exe");
-        using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("ImgConv.exe"))
-        using (var f = File.Create(exe)) s.CopyTo(f);
+        Extract("ImgConv.exe", dir);
+        if (HasResource("ImgConv.msix"))
+        {
+            Win11Menu.MoveAwayDll(dir); // Explorer may have the old one loaded
+            foreach (var r in new[] { "ImgConvMenu.dll", "ImgConv.msix", "ImgConv.cer" }) Extract(r, dir);
+        }
 
         Shortcut(Environment.SpecialFolder.Programs, exe, startMenu);
         Shortcut(Environment.SpecialFolder.DesktopDirectory, exe, desktop);
@@ -76,7 +92,9 @@ static class Installer
             k.SetValue("InstallLocation", dir);
             k.SetValue("UninstallString", "\"" + exe + "\" /uninstall");
             k.SetValue("QuietUninstallString", "\"" + exe + "\" /uninstall /quiet");
-            k.SetValue("EstimatedSize", (int)(new FileInfo(exe).Length / 1024) + 1, RegistryValueKind.DWord);
+            long size = 0;
+            foreach (var f in Directory.GetFiles(dir)) size += new FileInfo(f).Length;
+            k.SetValue("EstimatedSize", (int)(size / 1024) + 1, RegistryValueKind.DWord);
             k.SetValue("InstallDate", DateTime.Now.ToString("yyyyMMdd"));
             k.SetValue("NoModify", 1, RegistryValueKind.DWord);
             k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
@@ -86,6 +104,9 @@ static class Installer
         using (var p = Process.Start(new ProcessStartInfo(exe, "/setup " + (shellMenu ? "1" : "0") + " " + (autorun ? "1" : "0"))
                { UseShellExecute = false }))
             p.WaitForExit(15000);
+
+        if (win11) win11Note = Win11Menu.Register(dir);
+        else if (HasResource("ImgConv.msix")) Win11Menu.Unregister();
         return exe;
     }
 
@@ -118,7 +139,7 @@ class SetupForm : Form
     readonly float k;
     readonly TextBox path;
     readonly Button browse, go, cancel;
-    readonly CheckBox cStart, cDesk, cShell, cAuto, cRun;
+    readonly CheckBox cStart, cDesk, cShell, cAuto, cWin11, cRun;
     readonly Label pathLabel, doneText, sub;
     string installedExe;
 
@@ -134,7 +155,7 @@ class SetupForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(S(460), S(330));
+        ClientSize = new Size(S(460), S(340));
         BackColor = Color.FromArgb(248, 249, 251);
         using (var b = Art.Draw(SystemInformation.SmallIconSize.Width)) Icon = Icon.FromHandle(b.GetHicon());
 
@@ -161,17 +182,20 @@ class SetupForm : Form
         cDesk  = Check("Desktop shortcut", 175, false);
         cShell = Check("Add \"Convert to\" to the Explorer right-click menu", 200, true);
         cAuto  = Check("Start with Windows (in the tray)", 225, true);
+        cWin11 = Check("Also add it to the new Windows 11 menu (asks for admin once)", 250, Installer.CanWin11);
+        cWin11.Visible = Installer.CanWin11;
+        cShell.CheckedChanged += (s, e) => { cWin11.Enabled = cShell.Checked; if (!cShell.Checked) cWin11.Checked = false; };
 
-        doneText = new Label { Bounds = new Rectangle(S(18), S(92), S(424), S(110)), Visible = false,
+        doneText = new Label { Bounds = new Rectangle(S(18), S(92), S(424), S(140)), Visible = false,
             Text = "ImgConv is installed.\n\nLook for its icon in the tray next to the clock. Click it to open the converter.\n" +
                    "You can uninstall it any time from Settings → Apps." };
         Controls.Add(doneText);
-        cRun = Check("Launch ImgConv", 210, true);
+        cRun = Check("Launch ImgConv", 240, true);
         cRun.Visible = false;
 
-        go = new Button { Text = update ? "Update" : "Install", Bounds = new Rectangle(S(342), S(284), S(100), S(30)) };
+        go = new Button { Text = update ? "Update" : "Install", Bounds = new Rectangle(S(342), S(294), S(100), S(30)) };
         go.Click += (s, e) => Go();
-        cancel = new Button { Text = "Cancel", Bounds = new Rectangle(S(234), S(284), S(100), S(30)), DialogResult = DialogResult.Cancel };
+        cancel = new Button { Text = "Cancel", Bounds = new Rectangle(S(234), S(294), S(100), S(30)), DialogResult = DialogResult.Cancel };
         Controls.Add(go);
         Controls.Add(cancel);
         AcceptButton = go;
@@ -204,9 +228,11 @@ class SetupForm : Form
 
         go.Enabled = cancel.Enabled = false;
         Cursor = Cursors.WaitCursor;
+        string note;
         try
         {
-            installedExe = Installer.Run(path.Text.Trim(), cStart.Checked, cDesk.Checked, cShell.Checked, cAuto.Checked);
+            installedExe = Installer.Run(path.Text.Trim(), cStart.Checked, cDesk.Checked, cShell.Checked, cAuto.Checked,
+                                         cWin11.Visible && cWin11.Checked, out note);
         }
         catch (Exception ex)
         {
@@ -217,7 +243,13 @@ class SetupForm : Form
         }
         Cursor = Cursors.Default;
 
-        foreach (Control c in new Control[] { pathLabel, path, browse, cStart, cDesk, cShell, cAuto, cancel }) c.Visible = false;
+        if (note != null)
+        {
+            string first = note.Split('\n')[0].Trim();
+            doneText.Text += "\n\nThe new Windows 11 menu wasn't set up (" + (first.Length > 120 ? first.Substring(0, 120) + "…" : first) +
+                             "). \"Convert to\" is still under Show more options.";
+        }
+        foreach (Control c in new Control[] { pathLabel, path, browse, cStart, cDesk, cShell, cAuto, cWin11, cancel }) c.Visible = false;
         doneText.Visible = cRun.Visible = true;
         sub.Text = "All done";
         go.Text = "Finish";

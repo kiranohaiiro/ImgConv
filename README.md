@@ -16,7 +16,7 @@ Every form on the internet wants something different: "JPG only", "max 2 MB", "m
 - **Reads** JPG, PNG, BMP, GIF, TIFF, ICO, plus WebP / HEIC / AVIF through the codecs Windows already has.
 - **Target file size** — set "no larger than N KB" and ImgConv finds the best JPG quality that fits. If even quality 30 is too big, it downscales the image instead of turning it into mush.
 - **Max long side** in pixels (e.g. 1920).
-- **Right-click menu in Explorer** (on by default): *Convert to → JPG / PNG / …* — a small dialog asks the max size and quality (defaults: **490 KB, quality 100**). Select 20 photos → still one dialog. You can turn the dialog off to convert instantly with saved settings.
+- **Right-click menu in Explorer** (on by default), **including the new Windows 11 menu** — no "Show more options" needed: *Convert to → JPG / PNG / …* — a small dialog asks the max size and quality (defaults: **490 KB, quality 100**). Select 20 photos → still one dialog. You can turn the dialog off to convert instantly with saved settings.
 
   ![Size and quality dialog](docs/ask.png)
 - Drag & drop files or whole folders. Respects EXIF rotation. Transparent PNGs get a white background in JPG.
@@ -26,12 +26,12 @@ Every form on the internet wants something different: "JPG only", "max 2 MB", "m
 
 | | |
 |---|---|
-| Installer | ~150 KB |
-| Program | ~70 KB, single `.exe` |
+| Installer | ~300 KB |
+| Program | ~80 KB `.exe` (+ 140 KB menu DLL for Windows 11) |
 | RAM while idle in tray | ~4 MB working set |
 | CPU while idle | 0 — no timers, no polling, no update checks |
 | Dependencies | none — uses .NET Framework 4, built into every Windows 10/11 |
-| Admin rights | not needed |
+| Admin rights | not needed (one UAC prompt only if you want the Windows 11 menu, see below) |
 | Network | never touches it |
 
 ## Install
@@ -47,30 +47,34 @@ It installs to `%LOCALAPPDATA%\Programs\ImgConv` and shows up in *Settings → A
 
 Silent install: `ImgConv-Setup.exe /S`
 
+### About the Windows 11 menu
+
+Windows 11 only lets **packaged** apps into its new right-click menu. ImgConv ships a tiny signed MSIX package (it holds nothing but the menu registration; the app stays a normal folder). The package is signed with a self-signed certificate, so the installer asks for admin **once** to add that certificate to *Trusted People*. Say no, and "Convert to" is still available under *Show more options*.
+
 ## Usage
 
 - **Click the tray icon** → window. Drop photos in, or click to pick files. Settings (Explorer menu, the size/quality dialog, autostart) are at the bottom of the window.
-- **Right-click photos in Explorer** → *Convert to* → format. On Windows 11 it's under *Show more options* (or Shift+F10).
+- **Right-click photos in Explorer** → *Convert to* → format.
 
 Command line: `ImgConv.exe /to jpg "C:\path\photo.png"` — converts using saved settings and exits.
 
 ## Build from source
 
-No Visual Studio needed — the C# compiler ships with Windows:
-
-```bat
-build.cmd
+```powershell
+powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Produces `ImgConv-Setup.exe` (with the program embedded) and `dist\ImgConv.exe`.
+- The app and installer build with the C# compiler that ships with Windows — nothing to install.
+- The Windows 11 menu additionally needs **Visual Studio Build Tools (C++)** and the **Windows SDK**. Without them the script builds everything else and skips the menu. On first run it creates a self-signed certificate `CN=ImgConv` in your personal certificate store to sign the package (the private key stays on your PC).
 
-Source: [`ImgConv.cs`](ImgConv.cs) (the app) and [`Setup.cs`](Setup.cs) (the installer). ~800 lines in total.
+Source: [`ImgConv.cs`](ImgConv.cs) (the app), [`Setup.cs`](Setup.cs) (the installer), [`menu/`](menu) (Windows 11 menu DLL + package manifest).
 
 ## Limitations
 
 - Can't *save* WebP/HEIC/AVIF — Windows has no built-in encoder for them (reading works).
 - Size limit for PNG/GIF/BMP/TIFF works only by downscaling, since they're lossless.
 - Animated GIFs: only the first frame is kept.
+- The Windows 11 menu entry is x64 only (on ARM PCs use *Show more options*).
 
 ## License
 

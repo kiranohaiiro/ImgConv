@@ -1,0 +1,60 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- Sparse package: gives ImgConv an identity so Explorer shows "Convert to" in the
+     Windows 11 context menu. The app files live outside the package (ExternalLocation). -->
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+         xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+         xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+         xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap10 desktop4 desktop5 com rescap">
+  <Identity Name="ImgConv.ContextMenu" Publisher="CN=ImgConv" Version="1.1.0.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>ImgConv</DisplayName>
+    <PublisherDisplayName>ImgConv</PublisherDisplayName>
+    <Logo>Assets\Logo.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+  <Applications>
+    <Application Id="ImgConv" Executable="ImgConv.exe" uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="win32App">
+      <uap:VisualElements DisplayName="ImgConv" Description="Image converter" BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Logo.png" Square44x44Logo="Assets\Logo.png" AppListEntry="none" />
+      <Extensions>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type=".jpg"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".jpeg"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".jfif"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".png"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".bmp"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".gif"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".tif"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".tiff"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".webp"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".heic"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".heif"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".avif"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+            <desktop5:ItemType Type=".ico"><desktop5:Verb Id="ImgConv" Clsid="5C437DD0-633E-434E-B0BC-044A972C2B4D" /></desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="ImgConv context menu">
+              <com:Class Id="5C437DD0-633E-434E-B0BC-044A972C2B4D" Path="ImgConvMenu.dll" ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

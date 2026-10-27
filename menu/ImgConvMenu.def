@@ -1,0 +1,4 @@
+LIBRARY ImgConvMenu
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
