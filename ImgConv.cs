@@ -1,8 +1,8 @@
-// ImgConv — лёгкий конвертер изображений в трее (Windows, .NET Framework 4).
-// Режимы запуска:
-//   ImgConv.exe              — трей + окно
-//   ImgConv.exe /tray        — только трей (для автозапуска)
-//   ImgConv.exe /to jpg f..  — конвертировать файлы и выйти (из меню Проводника)
+// ImgConv — a tiny tray image converter (Windows, .NET Framework 4).
+// Launch modes:
+//   ImgConv.exe              — tray + window
+//   ImgConv.exe /tray        — tray only (used by autostart)
+//   ImgConv.exe /to jpg f..  — convert files and exit (Explorer menu)
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -30,7 +30,7 @@ static class Program
         Application.SetCompatibleTextRenderingDefault(false);
 
         if (a.Length >= 3 && a[0] == "/to") { RunCli(a); return; }
-        if (a.Length == 3 && a[0] == "/setup")  // вызывается установщиком
+        if (a.Length == 3 && a[0] == "/setup")  // called by the installer
         {
             if (a[1] == "1") Shell.On(); else Shell.Off();
             Shell.AutoOn = a[2] == "1";
@@ -42,7 +42,7 @@ static class Program
         using (var mx = new Mutex(true, "ImgConv.Tray.7f3c1a", out first))
         using (var ev = new EventWaitHandle(false, EventResetMode.AutoReset, "ImgConv.Show.7f3c1a"))
         {
-            if (!first) { ev.Set(); return; }   // уже запущена — просто показать окно
+            if (!first) { ev.Set(); return; }   // already running — just show its window
             bool silent = Array.IndexOf(a, "/tray") >= 0;
             Application.Run(new TrayCtx(ev, !silent));
         }
@@ -50,7 +50,7 @@ static class Program
 
     static void Uninstall(bool quiet)
     {
-        if (!quiet && MessageBox.Show("Удалить ImgConv с компьютера?", "ImgConv",
+        if (!quiet && MessageBox.Show("Remove ImgConv from this computer?", "ImgConv",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
         int me = System.Diagnostics.Process.GetCurrentProcess().Id;
@@ -67,9 +67,9 @@ static class Program
             if (File.Exists(lnk)) File.Delete(lnk);
         }
 
-        if (!quiet) MessageBox.Show("ImgConv удалён.", "ImgConv", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        if (!quiet) MessageBox.Show("ImgConv has been removed.", "ImgConv", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-        // Папку с самим exe удаляем после выхода процесса.
+        // Delete the exe folder after this process exits.
         string dir = Path.GetDirectoryName(Application.ExecutablePath);
         if (string.Equals(Path.GetFileName(dir), "ImgConv", StringComparison.OrdinalIgnoreCase))
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe",
@@ -87,19 +87,19 @@ static class Program
             catch (Exception ex) { errs.Add(Path.GetFileName(a[i]) + ": " + ex.Message); }
         }
         if (errs.Count > 0)
-            MessageBox.Show(string.Join("\n", errs), "ImgConv — ошибка", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(string.Join("\n", errs), "ImgConv — error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 }
 
-// ---------- Настройки (HKCU\Software\ImgConv) ----------
+// ---------- Settings (HKCU\Software\ImgConv) ----------
 static class Cfg
 {
     const string Key = @"Software\ImgConv";
     public static readonly string[] Formats = { "jpg", "png", "bmp", "gif", "tiff" };
     public static string Format = "jpg";
     public static int Quality = 90;
-    public static int TargetKB = 0;  // 0 = без ограничения
-    public static int MaxSide = 0;   // 0 = исходный размер
+    public static int TargetKB = 0;  // 0 = no limit
+    public static int MaxSide = 0;   // 0 = original size
 
     public static void Load()
     {
@@ -129,31 +129,31 @@ static class Cfg
             k.SetValue("TargetKB", TargetKB, RegistryValueKind.DWord);
             k.SetValue("MaxSide", MaxSide, RegistryValueKind.DWord);
         }
-        if (Shell.IsOn) Shell.On(); // обновить подписи в меню Проводника
+        if (Shell.IsOn) Shell.On(); // refresh labels in the Explorer menu
     }
 
     public static string Hint()
     {
         var p = new List<string>();
-        if (TargetKB > 0) p.Add("≤ " + TargetKB + " КБ");
+        if (TargetKB > 0) p.Add("≤ " + TargetKB + " KB");
         if (MaxSide > 0) p.Add("≤ " + MaxSide + " px");
         return p.Count == 0 ? "" : "  (" + string.Join(", ", p) + ")";
     }
 }
 
-// ---------- Конвертация ----------
+// ---------- Conversion ----------
 static class Conv
 {
     public static string Run(string src, string fmt, int quality, int targetKB, int maxSide)
     {
-        if (Array.IndexOf(Cfg.Formats, fmt) < 0) throw new Exception("неизвестный формат " + fmt);
+        if (Array.IndexOf(Cfg.Formats, fmt) < 0) throw new Exception("unknown format " + fmt);
         Bitmap img = Load(src);
         try
         {
             int big = Math.Max(img.Width, img.Height);
             if (maxSide > 0 && big > maxSide)
                 Swap(ref img, Resize(img, (int)Math.Round(img.Width * (double)maxSide / big), (int)Math.Round(img.Height * (double)maxSide / big)));
-            if (fmt == "jpg") Swap(ref img, Flatten(img)); // JPG без прозрачности — подложить белый фон
+            if (fmt == "jpg") Swap(ref img, Flatten(img)); // JPG has no transparency — put a white background under it
 
             byte[] data = Encode(img, fmt, quality, targetKB * 1024L);
             string dst = OutPath(src, fmt);
@@ -165,14 +165,14 @@ static class Conv
 
     static void Swap(ref Bitmap a, Bitmap b) { a.Dispose(); a = b; }
 
-    // Подбирает качество (JPG) и при необходимости уменьшает картинку, чтобы влезть в target байт.
+    // Picks JPG quality and, if needed, downscales so the result fits in `target` bytes.
     static byte[] Encode(Bitmap src, string fmt, int q, long target)
     {
         byte[] d = Save(src, fmt, q);
         if (target <= 0 || d.Length <= target) return d;
 
         bool lossy = fmt == "jpg";
-        const int QMIN = 30; // ниже — заметные артефакты, лучше уменьшить размер
+        const int QMIN = 30; // below this artifacts get ugly; downscaling looks better
         double scale = 1;
         Bitmap cur = src;
         try
@@ -193,7 +193,7 @@ static class Conv
                 }
                 scale *= Math.Sqrt((double)target / d.Length) * 0.95;
                 int w = (int)(src.Width * scale), h = (int)(src.Height * scale);
-                if (w < 8 || h < 8) return d; // меньше уже некуда
+                if (w < 8 || h < 8) return d; // can't go any smaller
                 if (cur != src) cur.Dispose();
                 cur = Resize(src, w, h);
                 if (!lossy) { d = Save(cur, fmt, q); if (d.Length <= target) return d; }
@@ -239,7 +239,7 @@ static class Conv
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.CompositingQuality = CompositingQuality.HighQuality;
-            ia.SetWrapMode(WrapMode.TileFlipXY); // без тёмной каймы по краям
+            ia.SetWrapMode(WrapMode.TileFlipXY); // avoids dark fringes at the edges
             g.DrawImage(src, new Rectangle(0, 0, b.Width, b.Height), 0, 0, src.Width, src.Height, GraphicsUnit.Pixel, ia);
         }
         return b;
@@ -266,7 +266,7 @@ static class Conv
 
     static Bitmap Load(string path)
     {
-        byte[] bytes = File.ReadAllBytes(path); // читаем целиком — файл не блокируется
+        byte[] bytes = File.ReadAllBytes(path); // read fully so the file isn't locked
         Bitmap bmp;
         try
         {
@@ -283,9 +283,9 @@ static class Conv
         }
         catch (Exception)
         {
-            // WebP / HEIC / AVIF — через системные кодеки Windows (WIC)
+            // WebP / HEIC / AVIF — via Windows' built-in codecs (WIC)
             try { bmp = LoadWic(bytes); }
-            catch (Exception) { throw new Exception("формат не поддерживается"); }
+            catch (Exception) { throw new Exception("unsupported format"); }
         }
         return bmp;
     }
@@ -307,7 +307,7 @@ static class Conv
         b.RotateFlip(t);
     }
 
-    // Отдельный метод, чтобы библиотеки WPF грузились в память только когда реально нужны.
+    // Separate method so WPF assemblies are loaded only when actually needed.
     [MethodImpl(MethodImplOptions.NoInlining)]
     static Bitmap LoadWic(byte[] bytes)
     {
@@ -328,7 +328,7 @@ static class Conv
     }
 }
 
-// ---------- Меню Проводника и автозапуск ----------
+// ---------- Explorer menu and autostart ----------
 static class Shell
 {
     const string Base = @"Software\Classes\SystemFileAssociations\image\shell\ImgConv";
@@ -342,7 +342,7 @@ static class Shell
         Off();
         using (var k = Registry.CurrentUser.CreateSubKey(Base))
         {
-            k.SetValue("MUIVerb", "Конвертировать в");
+            k.SetValue("MUIVerb", "Convert to");
             k.SetValue("SubCommands", "");
             k.SetValue("Icon", "\"" + exe + "\",0");
             string hint = Cfg.Hint();
@@ -375,7 +375,7 @@ static class Shell
     }
 }
 
-// ---------- Память ----------
+// ---------- Memory ----------
 static class Mem
 {
     [DllImport("kernel32.dll")] static extern bool SetProcessWorkingSetSize(IntPtr p, IntPtr min, IntPtr max);
@@ -389,7 +389,7 @@ static class Mem
     }
 }
 
-// ---------- Трей ----------
+// ---------- Tray ----------
 class TrayCtx : ApplicationContext
 {
     readonly NotifyIcon tray;
@@ -400,20 +400,20 @@ class TrayCtx : ApplicationContext
     {
         ui = new WindowsFormsSynchronizationContext();
 
-        var menu = new ContextMenu(); // нативное меню Win32 — легче ContextMenuStrip
-        var open = new MenuItem("Открыть конвертер", (s, e) => ShowForm()) { DefaultItem = true };
-        var shell = new MenuItem("Пункт в меню Проводника");
+        var menu = new ContextMenu(); // native Win32 menu — lighter than ContextMenuStrip
+        var open = new MenuItem("Open converter", (s, e) => ShowForm()) { DefaultItem = true };
+        var shell = new MenuItem("Explorer right-click menu");
         shell.Click += (s, e) => { if (Shell.IsOn) Shell.Off(); else Shell.On(); };
-        var auto = new MenuItem("Запускать с Windows");
+        var auto = new MenuItem("Start with Windows");
         auto.Click += (s, e) => Shell.AutoOn = !Shell.AutoOn;
         menu.Popup += (s, e) => { shell.Checked = Shell.IsOn; auto.Checked = Shell.AutoOn; };
         menu.MenuItems.AddRange(new[] { open, new MenuItem("-"), shell, auto, new MenuItem("-"),
-            new MenuItem("Выход", (s, e) => { tray.Visible = false; Application.Exit(); }) });
+            new MenuItem("Exit", (s, e) => { tray.Visible = false; Application.Exit(); }) });
 
-        tray = new NotifyIcon { Icon = Art.SmallIcon, Text = "ImgConv — конвертер фото", ContextMenu = menu, Visible = true };
+        tray = new NotifyIcon { Icon = Art.SmallIcon, Text = "ImgConv — image converter", ContextMenu = menu, Visible = true };
         tray.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowForm(); };
 
-        // Второй запуск exe посылает сигнал — показываем окно.
+        // A second launch of the exe signals us — show the window.
         ThreadPool.RegisterWaitForSingleObject(showEvent, (o, t) => ui.Post(_ => ShowForm(), null), null, -1, false);
 
         if (showNow) ShowForm(); else Mem.Trim();
@@ -438,7 +438,7 @@ class TrayCtx : ApplicationContext
     }
 }
 
-// ---------- Окно ----------
+// ---------- Window ----------
 class MainForm : Form
 {
     readonly Label drop, status;
@@ -464,7 +464,7 @@ class MainForm : Form
 
         drop = new Label
         {
-            Text = "Перетащите сюда фото\nили нажмите, чтобы выбрать",
+            Text = "Drop images here\nor click to choose files",
             TextAlign = ContentAlignment.MiddleCenter,
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = Color.FromArgb(240, 245, 255),
@@ -475,23 +475,23 @@ class MainForm : Form
         drop.Click += (s, e) => Pick();
         Controls.Add(drop);
 
-        AddLabel("Формат", 137);
+        AddLabel("Format", 137);
         fmt = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(S(190), S(134), S(138), S(24)) };
         foreach (var f in Cfg.Formats) fmt.Items.Add(f.ToUpperInvariant());
         fmt.SelectedIndex = Array.IndexOf(Cfg.Formats, Cfg.Format);
         Controls.Add(fmt);
 
-        AddLabel("Качество JPG, %", 167);
+        AddLabel("JPG quality, %", 167);
         q = Num(164, 1, 100, Cfg.Quality);
 
-        useKb = Check("Размер файла не больше, КБ", 194, Cfg.TargetKB > 0);
+        useKb = Check("Max file size, KB", 194, Cfg.TargetKB > 0);
         kb = Num(194, 1, 10000000, Cfg.TargetKB > 0 ? Cfg.TargetKB : 500);
 
-        useSide = Check("Длинная сторона не больше, px", 224, Cfg.MaxSide > 0);
+        useSide = Check("Max long side, px", 224, Cfg.MaxSide > 0);
         side = Num(224, 16, 100000, Cfg.MaxSide > 0 ? Cfg.MaxSide : 1920);
 
         status = new Label { Bounds = new Rectangle(S(12), S(256), S(316), S(36)), ForeColor = Color.DimGray,
-                             Text = "Файлы сохраняются рядом с исходными." };
+                             Text = "Results are saved next to the originals." };
         Controls.Add(status);
 
         EventHandler sync = (s, e) => { q.Enabled = fmt.SelectedIndex == 0; kb.Enabled = useKb.Checked; side.Enabled = useSide.Checked; };
@@ -541,7 +541,7 @@ class MainForm : Form
         using (var d = new OpenFileDialog
         {
             Multiselect = true,
-            Filter = "Изображения|*.jpg;*.jpeg;*.jfif;*.png;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.ico|Все файлы|*.*",
+            Filter = "Images|*.jpg;*.jpeg;*.jfif;*.png;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.ico|All files|*.*",
         })
             if (d.ShowDialog(this) == DialogResult.OK) Start(d.FileNames);
     }
@@ -552,7 +552,7 @@ class MainForm : Form
         var files = new List<string>();
         foreach (var p in input)
         {
-            if (Directory.Exists(p)) files.AddRange(Directory.GetFiles(p)); // папка — все файлы из неё
+            if (Directory.Exists(p)) files.AddRange(Directory.GetFiles(p)); // folder — take all files in it
             else files.Add(p);
         }
         if (files.Count == 0) return;
@@ -569,7 +569,7 @@ class MainForm : Form
             for (int i = 0; i < files.Count; i++)
             {
                 int n = i + 1;
-                Ui(() => status.Text = "Обработка " + n + " из " + files.Count + "…");
+                Ui(() => status.Text = "Converting " + n + " of " + files.Count + "…");
                 try { Conv.Run(files[i], f, qq, t, m); ok++; }
                 catch (Exception ex) { errs.Add(Path.GetFileName(files[i]) + ": " + ex.Message); }
             }
@@ -577,9 +577,9 @@ class MainForm : Form
             {
                 busy = false;
                 drop.Enabled = true;
-                status.Text = "Готово: " + ok + " из " + files.Count + (errs.Count > 0 ? ", ошибок: " + errs.Count : "");
+                status.Text = "Done: " + ok + " of " + files.Count + (errs.Count > 0 ? ", failed: " + errs.Count : "");
                 if (errs.Count > 0)
-                    MessageBox.Show(this, string.Join("\n", errs.Count > 15 ? errs.GetRange(0, 15) : errs), "Не удалось", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(this, string.Join("\n", errs.Count > 15 ? errs.GetRange(0, 15) : errs), "Some files failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 Mem.Trim();
             });
         }) { IsBackground = true, Priority = ThreadPriority.BelowNormal };
@@ -592,7 +592,7 @@ class MainForm : Form
     }
 }
 
-// ---------- Иконка (рисуется кодом, без файлов) ----------
+// ---------- Icon (drawn in code, no files) ----------
 static class Art
 {
     static Icon small;
@@ -635,7 +635,7 @@ static class Art
         return b;
     }
 
-    // Пишет .ico (32-битные DIB-кадры) — используется при сборке для иконки exe.
+    // Writes an .ico (32-bit DIB frames) — used at build time for the exe icon.
     public static void WriteIco(string path)
     {
         int[] sizes = { 16, 20, 24, 32, 40, 48, 64 };

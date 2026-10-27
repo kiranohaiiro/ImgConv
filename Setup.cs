@@ -1,6 +1,6 @@
-// Установщик ImgConv. Внутри лежит ImgConv.exe (как ресурс).
-// Ставит в %LOCALAPPDATA%\Programs\ImgConv — права администратора не нужны.
-// Тихая установка: ImgConv-Setup.exe /S
+// ImgConv installer. ImgConv.exe is embedded as a resource.
+// Installs to %LOCALAPPDATA%\Programs\ImgConv — no admin rights needed.
+// Silent install: ImgConv-Setup.exe /S
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -55,7 +55,7 @@ static class Installer
         if (!string.Equals(Path.GetFileName(dir), "ImgConv", StringComparison.OrdinalIgnoreCase))
             dir = Path.Combine(dir, "ImgConv");
 
-        // Закрыть запущенную копию, чтобы можно было заменить файл.
+        // Close a running copy so the file can be replaced.
         foreach (var p in Process.GetProcessesByName("ImgConv"))
             try { p.Kill(); p.WaitForExit(3000); } catch (Exception) { }
 
@@ -69,7 +69,7 @@ static class Installer
 
         using (var k = Registry.CurrentUser.CreateSubKey(UninstKey))
         {
-            k.SetValue("DisplayName", "ImgConv — конвертер фото");
+            k.SetValue("DisplayName", "ImgConv — image converter");
             k.SetValue("DisplayVersion", Version);
             k.SetValue("Publisher", "ImgConv");
             k.SetValue("DisplayIcon", "\"" + exe + "\",0");
@@ -82,7 +82,7 @@ static class Installer
             k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         }
 
-        // Меню Проводника и автозапуск прописывает сама программа — с правильным путём.
+        // The app itself registers the Explorer menu and autostart, so paths are correct.
         using (var p = Process.Start(new ProcessStartInfo(exe, "/setup " + (shellMenu ? "1" : "0") + " " + (autorun ? "1" : "0"))
                { UseShellExecute = false }))
             p.WaitForExit(15000);
@@ -102,7 +102,7 @@ static class Installer
             Type st = sc.GetType();
             st.InvokeMember("TargetPath", BindingFlags.SetProperty, null, sc, new object[] { exe });
             st.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, sc, new object[] { Path.GetDirectoryName(exe) });
-            st.InvokeMember("Description", BindingFlags.SetProperty, null, sc, new object[] { "Конвертер фото" });
+            st.InvokeMember("Description", BindingFlags.SetProperty, null, sc, new object[] { "Image converter" });
             st.InvokeMember("Save", BindingFlags.InvokeMethod, null, sc, null);
         }
         finally
@@ -129,7 +129,7 @@ class SetupForm : Form
         using (var g = CreateGraphics()) k = g.DpiX / 96f;
         bool update = Installer.Installed;
 
-        Text = "Установка ImgConv";
+        Text = "ImgConv Setup";
         Font = new Font("Segoe UI", 9f);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
@@ -138,40 +138,40 @@ class SetupForm : Form
         BackColor = Color.FromArgb(248, 249, 251);
         using (var b = Art.Draw(SystemInformation.SmallIconSize.Width)) Icon = Icon.FromHandle(b.GetHicon());
 
-        // Шапка
+        // Header
         var head = new Panel { Bounds = new Rectangle(0, 0, S(460), S(72)), BackColor = Color.White };
         head.Paint += (s, e) => e.Graphics.DrawLine(Pens.Gainsboro, 0, head.Height - 1, head.Width, head.Height - 1);
         head.Controls.Add(new PictureBox { Image = Art.Draw(S(44)), Bounds = new Rectangle(S(18), S(14), S(44), S(44)) });
-        head.Controls.Add(new Label { Text = update ? "Обновление ImgConv" : "Установка ImgConv", AutoSize = true,
+        head.Controls.Add(new Label { Text = update ? "Update ImgConv" : "Install ImgConv", AutoSize = true,
             Font = new Font("Segoe UI Semibold", 13f), Location = new Point(S(74), S(12)) });
-        sub = new Label { Text = "Лёгкий конвертер фото, который живёт в трее", AutoSize = true,
+        sub = new Label { Text = "A tiny image converter that lives in your tray", AutoSize = true,
             ForeColor = Color.DimGray, Location = new Point(S(76), S(42)) };
         head.Controls.Add(sub);
         Controls.Add(head);
 
-        pathLabel = new Label { Text = "Папка установки", AutoSize = true, Location = new Point(S(18), S(88)) };
+        pathLabel = new Label { Text = "Install folder", AutoSize = true, Location = new Point(S(18), S(88)) };
         Controls.Add(pathLabel);
         path = new TextBox { Text = Installer.DefaultDir, Bounds = new Rectangle(S(18), S(109), S(330), S(24)) };
         Controls.Add(path);
-        browse = new Button { Text = "Обзор…", Bounds = new Rectangle(S(356), S(107), S(86), S(27)) };
+        browse = new Button { Text = "Browse…", Bounds = new Rectangle(S(356), S(107), S(86), S(27)) };
         browse.Click += (s, e) => Browse();
         Controls.Add(browse);
 
-        cStart = Check("Ярлык в меню «Пуск»", 150, true);
-        cDesk  = Check("Ярлык на рабочем столе", 175, false);
-        cShell = Check("Пункт «Конвертировать в» в меню Проводника", 200, true);
-        cAuto  = Check("Запускать вместе с Windows (в трее)", 225, true);
+        cStart = Check("Start menu shortcut", 150, true);
+        cDesk  = Check("Desktop shortcut", 175, false);
+        cShell = Check("Add \"Convert to\" to the Explorer right-click menu", 200, true);
+        cAuto  = Check("Start with Windows (in the tray)", 225, true);
 
         doneText = new Label { Bounds = new Rectangle(S(18), S(92), S(424), S(110)), Visible = false,
-            Text = "ImgConv установлен.\n\nИконка появится в трее рядом с часами. Нажмите на неё, чтобы открыть конвертер.\n" +
-                   "Удалить программу можно в «Параметры → Приложения»." };
+            Text = "ImgConv is installed.\n\nLook for its icon in the tray next to the clock. Click it to open the converter.\n" +
+                   "You can uninstall it any time from Settings → Apps." };
         Controls.Add(doneText);
-        cRun = Check("Запустить ImgConv", 210, true);
+        cRun = Check("Launch ImgConv", 210, true);
         cRun.Visible = false;
 
-        go = new Button { Text = update ? "Обновить" : "Установить", Bounds = new Rectangle(S(342), S(284), S(100), S(30)) };
+        go = new Button { Text = update ? "Update" : "Install", Bounds = new Rectangle(S(342), S(284), S(100), S(30)) };
         go.Click += (s, e) => Go();
-        cancel = new Button { Text = "Отмена", Bounds = new Rectangle(S(234), S(284), S(100), S(30)), DialogResult = DialogResult.Cancel };
+        cancel = new Button { Text = "Cancel", Bounds = new Rectangle(S(234), S(284), S(100), S(30)), DialogResult = DialogResult.Cancel };
         Controls.Add(go);
         Controls.Add(cancel);
         AcceptButton = go;
@@ -188,14 +188,14 @@ class SetupForm : Form
 
     void Browse()
     {
-        using (var d = new FolderBrowserDialog { Description = "Куда установить ImgConv (будет создана папка ImgConv)" })
+        using (var d = new FolderBrowserDialog { Description = "Where to install ImgConv (an ImgConv folder will be created)" })
             if (d.ShowDialog(this) == DialogResult.OK)
                 path.Text = Path.Combine(d.SelectedPath, "ImgConv");
     }
 
     void Go()
     {
-        if (installedExe != null)   // экран «Готово»
+        if (installedExe != null)   // "Finish" screen
         {
             if (cRun.Checked) Process.Start(new ProcessStartInfo(installedExe) { WorkingDirectory = Path.GetDirectoryName(installedExe) });
             Close();
@@ -212,15 +212,15 @@ class SetupForm : Form
         {
             Cursor = Cursors.Default;
             go.Enabled = cancel.Enabled = true;
-            MessageBox.Show(this, "Не удалось установить:\n" + ex.Message, "ImgConv", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, "Installation failed:\n" + ex.Message, "ImgConv", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
         Cursor = Cursors.Default;
 
         foreach (Control c in new Control[] { pathLabel, path, browse, cStart, cDesk, cShell, cAuto, cancel }) c.Visible = false;
         doneText.Visible = cRun.Visible = true;
-        sub.Text = "Готово";
-        go.Text = "Готово";
+        sub.Text = "All done";
+        go.Text = "Finish";
         go.Enabled = true;
     }
 }

@@ -37,6 +37,8 @@ Every form on the internet wants something different: "JPG only", "max 2 MB", "m
 1. Download **`ImgConv-Setup.exe`** from [Releases](../../releases).
 2. Run it, pick the options, click **Install**.
 
+![Installer](docs/installer.png)
+
 It installs to `%LOCALAPPDATA%\Programs\ImgConv` and shows up in *Settings → Apps*, where you can uninstall it (removes everything: files, shortcuts, menu entry, autostart, settings).
 
 > Windows SmartScreen may warn about an unknown publisher because the exe isn't code-signed. Click *More info → Run anyway*, or build it yourself from source (below).
@@ -50,8 +52,6 @@ Silent install: `ImgConv-Setup.exe /S`
 - **Right-click the tray icon** → toggle the Explorer menu entry and autostart.
 
 Command line: `ImgConv.exe /to jpg "C:\path\photo.png"` — converts using saved settings and exits.
-
-> The interface is currently in Russian.
 
 ## Build from source
 
