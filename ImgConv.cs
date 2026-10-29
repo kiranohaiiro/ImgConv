@@ -171,6 +171,7 @@ static class Cfg
     public static int TargetKB = 490; // 0 = no limit
     public static int MaxSide = 0;    // 0 = original size
     public static bool Ask = true;    // show the size/quality dialog for Explorer conversions
+    public static bool Jpegli = true; // use jpegli for JPG when ImgConvCodecs.dll is present
     public static bool FirstRun;
 
     public static void Load()
@@ -184,6 +185,7 @@ static class Cfg
             TargetKB = Get(k, "TargetKB", 0, 10000000, TargetKB);
             MaxSide = Get(k, "MaxSide", 0, 100000, 0);
             Ask = Get(k, "Ask", 0, 1, 1) == 1;
+            Jpegli = Get(k, "Jpegli", 0, 1, 1) == 1;
         }
     }
 
@@ -202,6 +204,7 @@ static class Cfg
             k.SetValue("TargetKB", TargetKB, RegistryValueKind.DWord);
             k.SetValue("MaxSide", MaxSide, RegistryValueKind.DWord);
             k.SetValue("Ask", Ask ? 1 : 0, RegistryValueKind.DWord);
+            k.SetValue("Jpegli", Jpegli ? 1 : 0, RegistryValueKind.DWord);
         }
         FirstRun = false;
         if (Shell.IsOn) Shell.On(); // refresh labels in the Explorer menu
@@ -285,6 +288,11 @@ static class Conv
     {
         using (var ms = new MemoryStream())
         {
+            if (fmt == "jpg" && Cfg.Jpegli && Codecs.Available)
+            {
+                byte[] j = Codecs.Jpegli(img, q);
+                if (j != null) return j; // otherwise fall back to the Windows encoder below
+            }
             if (fmt == "jpg")
             {
                 if (jpegCodec == null)
@@ -344,6 +352,11 @@ static class Conv
     {
         byte[] bytes = File.ReadAllBytes(path); // read fully so the file isn't locked
         Bitmap bmp;
+        if (Codecs.IsJxl(bytes) && Codecs.Available)
+        {
+            bmp = Codecs.DecodeJxl(bytes);
+            if (bmp != null) return bmp; // otherwise try a Windows codec (JPEG XL extension from the Store)
+        }
         try
         {
             using (var ms = new MemoryStream(bytes))
@@ -404,10 +417,87 @@ static class Conv
     }
 }
 
+// ---------- Optional codecs: ImgConvCodecs.dll (jpegli + JPEG XL, built from libjxl) ----------
+static class Codecs
+{
+    const string Dll = "ImgConvCodecs.dll";
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    static extern int ic_jpegli_encode(IntPtr bgr, int w, int h, int stride, int quality, out IntPtr outBuf, out uint outSize);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    static extern int ic_jxl_decode(byte[] data, UIntPtr size, out IntPtr bgra, out int w, out int h);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    static extern void ic_free(IntPtr p);
+
+    static int state; // 0 = unknown, 1 = usable, -1 = missing or broken
+    public static bool Available
+    {
+        get
+        {
+            if (state == 0)
+                state = Environment.Is64BitProcess &&
+                        File.Exists(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), Dll)) ? 1 : -1;
+            return state > 0;
+        }
+    }
+
+    public static bool IsJxl(byte[] b)
+    {
+        if (b.Length >= 2 && b[0] == 0xFF && b[1] == 0x0A) return true; // bare codestream
+        return b.Length >= 12 && b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0x0C &&
+               b[4] == (byte)'J' && b[5] == (byte)'X' && b[6] == (byte)'L' && b[7] == (byte)' '; // container
+    }
+
+    // Returns null if jpegli isn't usable, so the caller can fall back.
+    public static byte[] Jpegli(Image img, int quality)
+    {
+        var bmp = img as Bitmap;
+        if (bmp == null) return null;
+        var bd = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        try
+        {
+            IntPtr buf; uint size;
+            if (ic_jpegli_encode(bd.Scan0, bmp.Width, bmp.Height, bd.Stride, quality, out buf, out size) != 0) return null;
+            try { var r = new byte[size]; Marshal.Copy(buf, r, 0, (int)size); return r; }
+            finally { ic_free(buf); }
+        }
+        catch (Exception) { state = -1; return null; } // DLL failed to load — stop trying
+        finally { bmp.UnlockBits(bd); }
+    }
+
+    public static Bitmap DecodeJxl(byte[] data)
+    {
+        try
+        {
+            IntPtr px; int w, h;
+            if (ic_jxl_decode(data, (UIntPtr)data.Length, out px, out w, out h) != 0) return null;
+            try
+            {
+                var b = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+                var bd = b.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+                try
+                {
+                    var row = new byte[w * 4];
+                    for (int y = 0; y < h; y++)
+                    {
+                        Marshal.Copy(new IntPtr(px.ToInt64() + (long)y * w * 4), row, 0, row.Length);
+                        Marshal.Copy(row, 0, new IntPtr(bd.Scan0.ToInt64() + (long)y * bd.Stride), row.Length);
+                    }
+                }
+                finally { b.UnlockBits(bd); }
+                return b;
+            }
+            finally { ic_free(px); }
+        }
+        catch (Exception) { state = -1; return null; }
+    }
+}
+
 // ---------- Explorer menu and autostart ----------
 static class Shell
 {
     const string Base = @"Software\Classes\SystemFileAssociations\image\shell\ImgConv";
+    // .jxl isn't a registered "image" type on most PCs, so it gets its own entry.
+    const string JxlBase = @"Software\Classes\SystemFileAssociations\.jxl\shell\ImgConv";
     const string Run = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
     // The "Menu" flag drives both menus: the classic one (registry verbs below)
@@ -435,8 +525,15 @@ static class Shell
     {
         string exe = Application.ExecutablePath;
         Registry.CurrentUser.DeleteSubKeyTree(Base, false);
+        Registry.CurrentUser.DeleteSubKeyTree(JxlBase, false);
         SetFlag(true);
-        using (var k = Registry.CurrentUser.CreateSubKey(Base))
+        Write(Base, exe);
+        if (Codecs.Available) Write(JxlBase, exe);
+    }
+
+    static void Write(string key, string exe)
+    {
+        using (var k = Registry.CurrentUser.CreateSubKey(key))
         {
             k.SetValue("MUIVerb", "Convert to");
             k.SetValue("SubCommands", "");
@@ -455,7 +552,12 @@ static class Shell
         }
     }
 
-    public static void Off() { Registry.CurrentUser.DeleteSubKeyTree(Base, false); SetFlag(false); }
+    public static void Off()
+    {
+        Registry.CurrentUser.DeleteSubKeyTree(Base, false);
+        Registry.CurrentUser.DeleteSubKeyTree(JxlBase, false);
+        SetFlag(false);
+    }
 
     public static bool AutoOn
     {
@@ -684,6 +786,12 @@ class MainForm : Form
         cShell.CheckedChanged += (s, e) => { if (cShell.Checked) Shell.On(); else Shell.Off(); };
         cAsk.CheckedChanged += (s, e) => { Cfg.Ask = cAsk.Checked; Cfg.Save(); };
         cAuto.CheckedChanged += (s, e) => Shell.AutoOn = cAuto.Checked;
+        if (Codecs.Available)
+        {
+            var cJpegli = Check("Use jpegli for JPG (smaller files, same quality)", 384, Cfg.Jpegli);
+            cJpegli.CheckedChanged += (s, e) => { Cfg.Jpegli = cJpegli.Checked; Cfg.Save(); };
+            ClientSize = new Size(ClientSize.Width, S(420));
+        }
 
         EventHandler sync = (s, e) => { q.Enabled = fmt.SelectedIndex == 0; kb.Enabled = useKb.Checked; side.Enabled = useSide.Checked; };
         fmt.SelectedIndexChanged += sync; useKb.CheckedChanged += sync; useSide.CheckedChanged += sync;
@@ -732,7 +840,7 @@ class MainForm : Form
         using (var d = new OpenFileDialog
         {
             Multiselect = true,
-            Filter = "Images|*.jpg;*.jpeg;*.jfif;*.png;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.ico|All files|*.*",
+            Filter = "Images|*.jpg;*.jpeg;*.jfif;*.png;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.jxl;*.ico|All files|*.*",
         })
             if (d.ShowDialog(this) == DialogResult.OK) Start(d.FileNames);
     }

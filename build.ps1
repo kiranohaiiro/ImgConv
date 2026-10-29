@@ -61,10 +61,36 @@ if ($vs -and $sdk -and (Test-Path "$kits\bin\$sdk\x64\makeappx.exe")) {
     if ($LASTEXITCODE) { throw 'signtool failed' }
 
     $res += "/resource:$dist\ImgConvMenu.dll,ImgConvMenu.dll", "/resource:$dist\ImgConv.msix,ImgConv.msix", "/resource:$dist\ImgConv.cer,ImgConv.cer"
+
+    # Optional codecs (jpegli + JPEG XL): needs the libjxl libraries from build-codecs.ps1.
+    $jxl = Join-Path $env:LOCALAPPDATA 'ImgConvBuild'
+    $need = 'jpegli-static.lib', 'jxl_dec.lib', 'jxl_cms.lib', 'hwy.lib', 'brotlidec.lib', 'brotlicommon.lib'
+    $libs = if (Test-Path "$jxl\out") { Get-ChildItem "$jxl\out" -Recurse -Include $need }
+    if ($libs -and @($libs).Count -eq $need.Count) {
+        $incs = @("$jxl\libjxl", "$jxl\libjxl\lib\include", "$jxl\out\lib\include", "$jxl\libjxl\third_party\libjpeg-turbo", "$jxl\libjxl\third_party\highway")
+        $incs += Get-ChildItem "$jxl\out" -Recurse -Filter jconfig.h | ForEach-Object { $_.DirectoryName } | Select-Object -Unique
+        $env:INCLUDE = (($incs | ForEach-Object { $_ }) -join ';') + ';' + $env:INCLUDE
+        & "$msvc\bin\Hostx64\x64\cl.exe" /nologo /utf-8 /O2 /MT /EHsc /std:c++17 /LD /DJXL_STATIC_DEFINE /DJXL_THREADS_STATIC_DEFINE `
+            codecs\ImgConvCodecs.cpp "/Fe:$dist\ImgConvCodecs.dll" "/Fo:$dist\\" `
+            /link /OPT:REF /OPT:ICF ($libs | ForEach-Object { $_.FullName }) | Select-String -Pattern 'error|warning LNK' | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE) { throw 'ImgConvCodecs build failed' }
+        $res += "/resource:$dist\ImgConvCodecs.dll,ImgConvCodecs.dll", "/resource:THIRD-PARTY-NOTICES.txt,THIRD-PARTY-NOTICES.txt"
+    } else {
+        Write-Host 'libjxl not built (run build-codecs.ps1 once): building without jpegli / JPEG XL.'
+    }
 } else {
     Write-Host 'C++ Build Tools or Windows SDK not found: building without the Windows 11 menu.'
 }
 
-# 3. Installer with everything embedded
-Csc (@("/win32icon:$dist\ImgConv.ico", '/main:SetupApp', '/out:ImgConv-Setup.exe') + $res + @('Setup.cs', 'ImgConv.cs'))
+# 3. Installer with everything embedded (gzip-compressed; Setup.cs unpacks on install)
+New-Item -ItemType Directory "$dist\gz" -Force | Out-Null
+$gz = foreach ($r in $res) {
+    $file, $name = ($r -replace '^/resource:', '') -split ',', 2
+    $target = "$dist\gz\$name"
+    $in = [IO.File]::OpenRead($file); $outStream = [IO.File]::Create($target)
+    $z = New-Object IO.Compression.GZipStream($outStream, [IO.Compression.CompressionMode]::Compress)
+    $in.CopyTo($z); $z.Dispose(); $outStream.Dispose(); $in.Dispose()
+    "/resource:$target,$name"
+}
+Csc (@("/win32icon:$dist\ImgConv.ico", '/main:SetupApp', '/out:ImgConv-Setup.exe') + $gz + @('Setup.cs', 'ImgConv.cs'))
 Write-Host ('Done: ImgConv-Setup.exe ({0:N0} KB)' -f ((Get-Item ImgConv-Setup.exe).Length / 1KB))

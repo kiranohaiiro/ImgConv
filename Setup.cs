@@ -33,7 +33,7 @@ static class SetupApp
 
 static class Installer
 {
-    public const string Version = "1.1";
+    public const string Version = "1.2";
     const string UninstKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\ImgConv";
 
     public static string DefaultDir
@@ -57,7 +57,8 @@ static class Installer
     static void Extract(string name, string dir)
     {
         using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
-        using (var f = File.Create(Path.Combine(dir, name))) s.CopyTo(f);
+        using (var z = new System.IO.Compression.GZipStream(s, System.IO.Compression.CompressionMode.Decompress))
+        using (var f = File.Create(Path.Combine(dir, name))) z.CopyTo(f);
     }
 
     public static string Run(string dir, bool startMenu, bool desktop, bool shellMenu, bool autorun, bool win11, out string win11Note)
@@ -74,6 +75,11 @@ static class Installer
         Directory.CreateDirectory(dir);
         string exe = Path.Combine(dir, "ImgConv.exe");
         Extract("ImgConv.exe", dir);
+        if (HasResource("ImgConvCodecs.dll")) // jpegli + JPEG XL, with the licenses it requires
+        {
+            Extract("ImgConvCodecs.dll", dir);
+            Extract("THIRD-PARTY-NOTICES.txt", dir);
+        }
         if (HasResource("ImgConv.msix"))
         {
             Win11Menu.MoveAwayDll(dir); // Explorer may have the old one loaded

@@ -13,8 +13,13 @@ Every form on the internet wants something different: "JPG only", "max 2 MB", "m
 ## Features
 
 - **Convert** to JPG, PNG, BMP, GIF, TIFF.
-- **Reads** JPG, PNG, BMP, GIF, TIFF, ICO, plus WebP / HEIC / AVIF through the codecs Windows already has.
+- **Reads** JPG, PNG, BMP, GIF, TIFF, ICO, **JPEG XL**, plus WebP / HEIC / AVIF through the codecs Windows already has. JPEG XL works out of the box — no Microsoft Store extension needed.
+- **jpegli** — JPGs are encoded with Google's [jpegli](https://github.com/google/jpegli): same size, visibly cleaner, or same quality, ~10% smaller. Can be turned off in settings.
 - **Target file size** — set "no larger than N KB" and ImgConv finds the best JPG quality that fits. If even quality 30 is too big, it downscales the image instead of turning it into mush.
+
+  ![Windows encoder vs jpegli, both 30 KB](docs/jpegli-vs-windows.png)
+
+  *Same photo squeezed to 30 KB (crop, 2× zoom). Left: the encoder built into Windows — blocky background. Right: jpegli.*
 - **Max long side** in pixels (e.g. 1920).
 - **Right-click menu in Explorer** (on by default), **including the new Windows 11 menu** — no "Show more options" needed: *Convert to → JPG / PNG / …* — a small dialog asks the max size and quality (defaults: **490 KB, quality 100**). Select 20 photos → still one dialog. You can turn the dialog off to convert instantly with saved settings.
 
@@ -26,8 +31,8 @@ Every form on the internet wants something different: "JPG only", "max 2 MB", "m
 
 | | |
 |---|---|
-| Installer | ~300 KB |
-| Program | ~80 KB `.exe` (+ 140 KB menu DLL for Windows 11) |
+| Installer | ~800 KB |
+| Program | ~80 KB `.exe` + 1.4 MB codecs DLL (loaded only while converting) + 140 KB Windows 11 menu DLL |
 | RAM while idle in tray | ~4 MB working set |
 | CPU while idle | 0 — no timers, no polling, no update checks |
 | Dependencies | none — uses .NET Framework 4, built into every Windows 10/11 |
@@ -65,17 +70,18 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
 - The app and installer build with the C# compiler that ships with Windows — nothing to install.
+- jpegli and JPEG XL come from [libjxl](https://github.com/libjxl/libjxl). Build it once with `build-codecs.ps1` (downloads libjxl v0.11.1 into `%LOCALAPPDATA%\ImgConvBuild`, needs Visual Studio Build Tools); after that `build.ps1` includes `ImgConvCodecs.dll`. Without it the app still works, using the Windows JPEG encoder.
 - The Windows 11 menu additionally needs **Visual Studio Build Tools (C++)** and the **Windows SDK**. Without them the script builds everything else and skips the menu. On first run it creates a self-signed certificate `CN=ImgConv` in your personal certificate store to sign the package (the private key stays on your PC).
 
-Source: [`ImgConv.cs`](ImgConv.cs) (the app), [`Setup.cs`](Setup.cs) (the installer), [`menu/`](menu) (Windows 11 menu DLL + package manifest).
+Source: [`ImgConv.cs`](ImgConv.cs) (the app), [`Setup.cs`](Setup.cs) (the installer), [`menu/`](menu) (Windows 11 menu DLL + package manifest), [`codecs/`](codecs) (jpegli + JPEG XL wrapper).
 
 ## Limitations
 
-- Can't *save* WebP/HEIC/AVIF — Windows has no built-in encoder for them (reading works).
+- Can't *save* WebP/HEIC/AVIF/JPEG XL yet (reading works).
 - Size limit for PNG/GIF/BMP/TIFF works only by downscaling, since they're lossless.
 - Animated GIFs: only the first frame is kept.
 - The Windows 11 menu entry is x64 only (on ARM PCs use *Show more options*).
 
 ## License
 
-MIT
+MIT. `ImgConvCodecs.dll` bundles libjxl, Highway, Brotli and skcms under their own permissive licenses — see [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
