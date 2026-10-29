@@ -1,5 +1,7 @@
 # ImgConv
 
+![Right-click a photo → Convert to, right in the Windows 11 menu](docs/win11-menu.png)
+
 **A tiny Windows tray app that does one thing: converts images to another format and squeezes them to the file size you need.**
 
 PNG → JPG, WebP/HEIC → JPG, "make this photo under 500 KB" — drop the file in, done. No accounts, no ads, no uploading your photos to a random website, no 200 MB Electron app.
