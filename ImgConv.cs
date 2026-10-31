@@ -603,12 +603,17 @@ static class Win11Menu
         }
     }
 
-    // Returns null on success, otherwise a short reason.
-    public static string Register(string dir)
+    // Returns null on success, otherwise a short reason. With allowPrompt=false (silent installs,
+    // e.g. winget) it never shows a UAC prompt: the new menu is set up only if the certificate is already trusted.
+    public static string Register(string dir, bool allowPrompt)
     {
         string msix = Path.Combine(dir, "ImgConv.msix"), cer = Path.Combine(dir, "ImgConv.cer");
         if (!File.Exists(msix) || !File.Exists(cer)) return "package files are missing";
-        if (!CertTrusted(cer) && !TrustCert(cer)) return "administrator permission was not given";
+        if (!CertTrusted(cer))
+        {
+            if (!allowPrompt) return "skipped in silent mode: the certificate isn't trusted yet";
+            if (!TrustCert(cer)) return "administrator permission was not given";
+        }
         string err = PowerShell("Get-AppxPackage " + Package + " | Remove-AppxPackage; " +
                                 "Add-AppxPackage -Path " + Quote(msix) + " -ExternalLocation " + Quote(dir));
         return err.Length == 0 ? null : err;

@@ -1,0 +1,68 @@
+# Builds ImgConv-Setup.exe from source on every push, so anyone can see that a release
+# comes from this code. The artifact is what a code-signing service (SignPath) would sign.
+#
+# Note: the Windows 11 menu package is signed here with a throwaway self-signed certificate
+# made on the build machine, so the CI artifact is for verification, not for distribution.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      # libjxl (jpegli + JPEG XL decoder) takes ~10 minutes to build; reuse it between runs.
+      - name: Cache libjxl build
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ImgConvBuild
+          key: libjxl-v0.11.1-${{ hashFiles('build-codecs.ps1') }}
+
+      - name: Build libjxl
+        shell: powershell
+        run: |
+          $lib = Get-ChildItem "$env:LOCALAPPDATA\ImgConvBuild\out" -Recurse -Filter jpegli-static.lib -ErrorAction SilentlyContinue
+          if (-not $lib) { powershell -NoProfile -ExecutionPolicy Bypass -File build-codecs.ps1; if ($LASTEXITCODE) { exit 1 } }
+          else { Write-Host 'libjxl restored from cache' }
+
+      - name: Build ImgConv
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+          if ($LASTEXITCODE) { exit 1 }
+          Get-ChildItem ImgConv-Setup.exe, dist\*.dll, dist\ImgConv.exe | Format-Table Name, Length
+
+      - name: Smoke test (silent install, convert, uninstall)
+        shell: powershell
+        run: |
+          $p = Start-Process .\ImgConv-Setup.exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode) { throw "setup exit code $($p.ExitCode)" }
+          $app = "$env:LOCALAPPDATA\Programs\ImgConv\ImgConv.exe"
+          if (-not (Test-Path $app)) { throw 'ImgConv.exe was not installed' }
+          New-ItemProperty HKCU:\Software\ImgConv -Name Ask -Value 0 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty HKCU:\Software\ImgConv -Name Notify -Value 0 -PropertyType DWord -Force | Out-Null
+          Add-Type -AssemblyName System.Drawing
+          $b = New-Object System.Drawing.Bitmap 1200, 900
+          $g = [System.Drawing.Graphics]::FromImage($b); $r = New-Object Random 1
+          for ($i = 0; $i -lt 3000; $i++) { $g.FillEllipse((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb($r.Next(256), $r.Next(256), $r.Next(256)))), $r.Next(1200), $r.Next(900), 40, 40) }
+          $b.Save("$env:RUNNER_TEMP\test.png"); $g.Dispose(); $b.Dispose()
+          Start-Process $app -ArgumentList "/to jpg `"$env:RUNNER_TEMP\test.png`"" -Wait
+          $out = Get-Item "$env:RUNNER_TEMP\test.jpg"
+          Write-Host ("converted: {0:N0} KB (limit 490 KB)" -f ($out.Length / 1KB))
+          if ($out.Length -gt 490KB) { throw 'output is larger than the 490 KB limit' }
+          Start-Process $app -ArgumentList '/uninstall /quiet' -Wait
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ImgConv-Setup
+          path: ImgConv-Setup.exe

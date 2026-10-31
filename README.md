@@ -70,9 +70,9 @@ The gap ImgConv fills is the upload-form case: you don't want to pick a quality 
 
 It installs to `%LOCALAPPDATA%\Programs\ImgConv` and shows up in *Settings → Apps*, where you can uninstall it (removes everything: files, shortcuts, menu entry, autostart, settings).
 
-> Windows SmartScreen may warn about an unknown publisher because the exe isn't code-signed. Click *More info → Run anyway*, or build it yourself from source (below).
+> Windows SmartScreen may warn about an unknown publisher because the exe isn't code-signed yet (see [CODE_SIGNING.md](CODE_SIGNING.md)). Click *More info → Run anyway*, or build it yourself from source (below). Every release is also built on [GitHub Actions](../../actions) from this code.
 
-Silent install: `ImgConv-Setup.exe /S`
+Silent install: `ImgConv-Setup.exe /S` (no prompts at all; the Windows 11 menu is added silently only if its certificate is already trusted, otherwise the classic menu is used).
 
 ### About the Windows 11 menu
 

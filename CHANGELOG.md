@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1 — 2026-10-31
+
+- Silent install (`/S`, used by winget) never shows a UAC prompt. The Windows 11 menu is set up silently only if its certificate is already trusted; otherwise the classic menu is used.
+- Builds now run on GitHub Actions with a smoke test (silent install, convert under 490 KB, uninstall).
+- [CODE_SIGNING.md](CODE_SIGNING.md): code signing policy.
+
 ## 1.3 — 2026-10-31
 
 - **Size presets**: Upload forms 490 KB, Small 200 KB, Email 2 MB, Discord 10 MB, Marketplace (eBay) 1600 px / 1 MB. In the window and in the right-click dialog.

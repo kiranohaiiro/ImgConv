@@ -21,6 +21,7 @@ static class SetupApp
         if (a.Length > 0 && a[0].ToUpperInvariant() == "/S")
         {
             string note;
+            Installer.Silent = true; // no prompts at all: winget and scripted installs must not hang on UAC
             try { Installer.Run(Installer.DefaultDir, true, false, true, true, Installer.CanWin11, out note); return 0; }
             catch (Exception) { return 1; }
         }
@@ -33,7 +34,8 @@ static class SetupApp
 
 static class Installer
 {
-    public const string Version = "1.3";
+    public const string Version = "1.3.1";
+    public static bool Silent; // /S: no UI and no UAC prompts
     const string UninstKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\ImgConv";
 
     public static string DefaultDir
@@ -111,7 +113,7 @@ static class Installer
                { UseShellExecute = false }))
             p.WaitForExit(15000);
 
-        if (win11) win11Note = Win11Menu.Register(dir);
+        if (win11) win11Note = Win11Menu.Register(dir, !Silent);
         else if (HasResource("ImgConv.msix")) Win11Menu.Unregister();
         return exe;
     }
