@@ -33,7 +33,7 @@ static class SetupApp
 
 static class Installer
 {
-    public const string Version = "1.2";
+    public const string Version = "1.3";
     const string UninstKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\ImgConv";
 
     public static string DefaultDir

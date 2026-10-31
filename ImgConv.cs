@@ -111,14 +111,16 @@ static class Program
                 if (f.ShowDialog() != DialogResult.OK) return;
 
         var errs = new List<string>();
+        var done = new List<string>();
         foreach (var file in files)
         {
-            try { Conv.Run(file, fmt, Cfg.Quality, Cfg.TargetKB, Cfg.MaxSide); }
+            try { done.Add(Conv.Run(file, fmt, Cfg.Quality, Cfg.TargetKB, Cfg.MaxSide)); }
             catch (Exception ex) { errs.Add(Path.GetFileName(file) + ": " + ex.Message); }
         }
         if (errs.Count > 0)
             MessageBox.Show(string.Join("\n", errs.Count > 15 ? errs.GetRange(0, 15) : errs), "ImgConv — error",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        if (done.Count > 0 && Cfg.Notify) Application.Run(new Toast(done));
     }
 
     static bool SendToLeader(List<string> files)
@@ -172,6 +174,7 @@ static class Cfg
     public static int MaxSide = 0;    // 0 = original size
     public static bool Ask = true;    // show the size/quality dialog for Explorer conversions
     public static bool Jpegli = true; // use jpegli for JPG when ImgConvCodecs.dll is present
+    public static bool Notify = true; // "Done" popup after Explorer conversions
     public static bool FirstRun;
 
     public static void Load()
@@ -186,6 +189,7 @@ static class Cfg
             MaxSide = Get(k, "MaxSide", 0, 100000, 0);
             Ask = Get(k, "Ask", 0, 1, 1) == 1;
             Jpegli = Get(k, "Jpegli", 0, 1, 1) == 1;
+            Notify = Get(k, "Notify", 0, 1, 1) == 1;
         }
     }
 
@@ -205,6 +209,7 @@ static class Cfg
             k.SetValue("MaxSide", MaxSide, RegistryValueKind.DWord);
             k.SetValue("Ask", Ask ? 1 : 0, RegistryValueKind.DWord);
             k.SetValue("Jpegli", Jpegli ? 1 : 0, RegistryValueKind.DWord);
+            k.SetValue("Notify", Notify ? 1 : 0, RegistryValueKind.DWord);
         }
         FirstRun = false;
         if (Shell.IsOn) Shell.On(); // refresh labels in the Explorer menu
@@ -225,6 +230,13 @@ static class Conv
 {
     public static string Run(string src, string fmt, int quality, int targetKB, int maxSide)
     {
+        return Run(src, fmt, quality, targetKB, maxSide, null, null);
+    }
+
+    // Converts one file. The result goes next to the source, or into outDir with outName if given.
+    // Location and camera data (EXIF/GPS) are never copied: images are re-encoded from pixels only.
+    public static string Run(string src, string fmt, int quality, int targetKB, int maxSide, string outDir, string outName)
+    {
         if (Array.IndexOf(Cfg.Formats, fmt) < 0) throw new Exception("unknown format " + fmt);
         Bitmap img = Load(src);
         try
@@ -235,7 +247,9 @@ static class Conv
             if (fmt == "jpg") Swap(ref img, Flatten(img)); // JPG has no transparency — put a white background under it
 
             byte[] data = Encode(img, fmt, quality, targetKB * 1024L);
-            string dst = OutPath(src, fmt);
+            if (outDir != null) Directory.CreateDirectory(outDir);
+            string dst = OutPath(outDir ?? Path.GetDirectoryName(Path.GetFullPath(src)),
+                                 outName ?? Path.GetFileNameWithoutExtension(src), fmt);
             File.WriteAllBytes(dst, data);
             return dst;
         }
@@ -340,9 +354,8 @@ static class Conv
         return b;
     }
 
-    static string OutPath(string src, string fmt)
+    static string OutPath(string dir, string name, string fmt)
     {
-        string dir = Path.GetDirectoryName(Path.GetFullPath(src)), name = Path.GetFileNameWithoutExtension(src);
         string p = Path.Combine(dir, name + "." + fmt);
         for (int n = 1; File.Exists(p); n++) p = Path.Combine(dir, name + " (" + n + ")." + fmt);
         return p;
@@ -741,12 +754,12 @@ class MainForm : Form
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(S(340), S(396));
         AllowDrop = true;
+        KeyPreview = true;
 
         drop = new Label
         {
-            Text = "Drop images here\nor click to choose files",
+            Text = "Drop images here or click to choose files\n\nor paste a screenshot: Ctrl+V",
             TextAlign = ContentAlignment.MiddleCenter,
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = Color.FromArgb(240, 245, 255),
@@ -763,35 +776,47 @@ class MainForm : Form
         fmt.SelectedIndex = Array.IndexOf(Cfg.Formats, Cfg.Format);
         Controls.Add(fmt);
 
-        AddLabel("JPG quality, %", 167);
-        q = Num(164, 1, 100, Cfg.Quality);
+        AddLabel("JPG quality, %", 197);
+        q = Num(194, 1, 100, Cfg.Quality);
 
-        useKb = Check("Max file size, KB", 194, Cfg.TargetKB > 0);
-        kb = Num(194, 1, 10000000, Cfg.TargetKB > 0 ? Cfg.TargetKB : 490);
+        useKb = Check("Max file size, KB", 224, Cfg.TargetKB > 0);
+        kb = Num(224, 1, 10000000, Cfg.TargetKB > 0 ? Cfg.TargetKB : 490);
 
-        useSide = Check("Max long side, px", 224, Cfg.MaxSide > 0);
-        side = Num(224, 16, 100000, Cfg.MaxSide > 0 ? Cfg.MaxSide : 1920);
+        useSide = Check("Max long side, px", 254, Cfg.MaxSide > 0);
+        side = Num(254, 16, 100000, Cfg.MaxSide > 0 ? Cfg.MaxSide : 1920);
 
-        status = new Label { Bounds = new Rectangle(S(12), S(256), S(316), S(20)), ForeColor = Color.DimGray,
+        AddLabel("Preset", 167);
+        Controls.Add(Presets.Attach(new Rectangle(S(120), S(164), S(208), S(24)), useKb, kb, useSide, side));
+
+        status = new Label { Bounds = new Rectangle(S(12), S(286), S(316), S(20)), ForeColor = Color.DimGray, AutoEllipsis = true,
                              Text = "Results are saved next to the originals." };
         Controls.Add(status);
 
         // ---- Settings ----
-        Controls.Add(new Label { Bounds = new Rectangle(S(12), S(284), S(316), 1), BorderStyle = BorderStyle.Fixed3D });
-        Controls.Add(new Label { Text = "Settings", AutoSize = true, Location = new Point(S(12), S(292)),
+        Controls.Add(new Label { Bounds = new Rectangle(S(12), S(314), S(316), 1), BorderStyle = BorderStyle.Fixed3D });
+        Controls.Add(new Label { Text = "Settings", AutoSize = true, Location = new Point(S(12), S(322)),
                                  Font = new Font("Segoe UI Semibold", 9f) });
-        var cShell = Check("Add \"Convert to\" to the Explorer right-click menu", 312, Shell.IsOn);
-        var cAsk = Check("Ask size and quality when converting from Explorer", 336, Cfg.Ask);
-        var cAuto = Check("Start with Windows (in the tray)", 360, Shell.AutoOn);
+        var cShell = Check("Add \"Convert to\" to the Explorer right-click menu", 342, Shell.IsOn);
+        var cAsk = Check("Ask size and quality when converting from Explorer", 366, Cfg.Ask);
+        var cNotify = Check("Show a \"Done\" popup after converting from Explorer", 390, Cfg.Notify);
+        var cAuto = Check("Start with Windows (in the tray)", 414, Shell.AutoOn);
         cShell.CheckedChanged += (s, e) => { if (cShell.Checked) Shell.On(); else Shell.Off(); };
         cAsk.CheckedChanged += (s, e) => { Cfg.Ask = cAsk.Checked; Cfg.Save(); };
+        cNotify.CheckedChanged += (s, e) => { Cfg.Notify = cNotify.Checked; Cfg.Save(); };
         cAuto.CheckedChanged += (s, e) => Shell.AutoOn = cAuto.Checked;
+        ClientSize = new Size(S(340), S(446));
         if (Codecs.Available)
         {
-            var cJpegli = Check("Use jpegli for JPG (smaller files, same quality)", 384, Cfg.Jpegli);
+            var cJpegli = Check("Use jpegli for JPG (smaller files, same quality)", 438, Cfg.Jpegli);
             cJpegli.CheckedChanged += (s, e) => { Cfg.Jpegli = cJpegli.Checked; Cfg.Save(); };
-            ClientSize = new Size(ClientSize.Width, S(420));
+            ClientSize = new Size(S(340), S(470));
         }
+
+        KeyDown += (s, e) =>
+        {
+            // Ctrl+V anywhere except inside the number boxes, where it should paste text as usual.
+            if (e.Control && e.KeyCode == Keys.V && !(ActiveControl is NumericUpDown)) { Paste(); e.Handled = true; }
+        };
 
         EventHandler sync = (s, e) => { q.Enabled = fmt.SelectedIndex == 0; kb.Enabled = useKb.Checked; side.Enabled = useSide.Checked; };
         fmt.SelectedIndexChanged += sync; useKb.CheckedChanged += sync; useSide.CheckedChanged += sync;
@@ -845,7 +870,33 @@ class MainForm : Form
             if (d.ShowDialog(this) == DialogResult.OK) Start(d.FileNames);
     }
 
-    void Start(string[] input)
+    // Ctrl+V: copied files are converted like dropped ones; a copied picture (a screenshot)
+    // is converted into Pictures\ImgConv and the result is put back on the clipboard as a file.
+    void Paste()
+    {
+        if (busy) return;
+        try
+        {
+            if (Clipboard.ContainsFileDropList())
+            {
+                var list = Clipboard.GetFileDropList();
+                var paths = new string[list.Count];
+                list.CopyTo(paths, 0);
+                Start(paths);
+                return;
+            }
+            if (!Clipboard.ContainsImage()) { status.Text = "Nothing to paste: copy a picture or some files first."; return; }
+            string tmp = Path.Combine(Path.GetTempPath(), "ImgConv-paste-" + Guid.NewGuid().ToString("N") + ".png");
+            using (var img = Clipboard.GetImage()) img.Save(tmp, ImageFormat.Png);
+            string outDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "ImgConv");
+            Start(new[] { tmp }, outDir, "Pasted " + DateTime.Now.ToString("yyyy-MM-dd HHmmss"), true);
+        }
+        catch (Exception ex) { status.Text = "Couldn't paste: " + ex.Message; }
+    }
+
+    void Start(string[] input) { Start(input, null, null, false); }
+
+    void Start(string[] input, string outDir, string outName, bool fromClipboard)
     {
         if (busy) return;
         var files = new List<string>();
@@ -865,18 +916,27 @@ class MainForm : Form
         {
             int ok = 0;
             var errs = new List<string>();
+            var done = new List<string>();
             for (int i = 0; i < files.Count; i++)
             {
                 int n = i + 1;
                 Ui(() => status.Text = "Converting " + n + " of " + files.Count + "…");
-                try { Conv.Run(files[i], f, qq, t, m); ok++; }
+                try { done.Add(Conv.Run(files[i], f, qq, t, m, outDir, outName)); ok++; }
                 catch (Exception ex) { errs.Add(Path.GetFileName(files[i]) + ": " + ex.Message); }
             }
+            if (fromClipboard) foreach (var p in files) try { File.Delete(p); } catch (Exception) { }
             Ui(() =>
             {
                 busy = false;
                 drop.Enabled = true;
                 status.Text = "Done: " + ok + " of " + files.Count + (errs.Count > 0 ? ", failed: " + errs.Count : "");
+                if (fromClipboard && done.Count > 0)
+                {
+                    var list = new System.Collections.Specialized.StringCollection();
+                    list.AddRange(done.ToArray());
+                    try { Clipboard.SetFileDropList(list); } catch (Exception) { }
+                    status.Text = "Saved to Pictures\\ImgConv and copied: Ctrl+V to paste it anywhere.";
+                }
                 if (errs.Count > 0)
                     MessageBox.Show(this, string.Join("\n", errs.Count > 15 ? errs.GetRange(0, 15) : errs), "Some files failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 Mem.Trim();
@@ -888,6 +948,46 @@ class MainForm : Form
     void Ui(Action a)
     {
         try { if (!IsDisposed && IsHandleCreated) BeginInvoke(a); } catch (InvalidOperationException) { }
+    }
+}
+
+// ---------- Common size limits, one click away ----------
+// Picking a preset fills in the fields; editing a field by hand switches the box back to "Custom".
+static class Presets
+{
+    static readonly string[] Names = { "Custom", "Upload forms: 490 KB", "Small: 200 KB", "Email: 2 MB", "Discord: 10 MB", "Marketplace (eBay): 1600 px, 1 MB" };
+    static readonly int[] Kb = { 0, 490, 200, 2048, 10240, 1024 };
+    static readonly int[] Side = { 0, 0, 0, 0, 0, 1600 };
+
+    public static ComboBox Attach(Rectangle bounds, CheckBox useKb, NumericUpDown kb, CheckBox useSide, NumericUpDown side)
+    {
+        var box = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = bounds };
+        box.Items.AddRange(Names);
+        bool applying = false;
+
+        Action detect = () =>
+        {
+            int match = 0;
+            for (int i = 1; i < Names.Length; i++)
+                if (useKb.Checked && kb.Value == Kb[i] &&
+                    (Side[i] == 0 ? !useSide.Checked : useSide.Checked && side.Value == Side[i])) match = i;
+            applying = true; box.SelectedIndex = match; applying = false;
+        };
+        box.SelectedIndexChanged += (s, e) =>
+        {
+            int i = box.SelectedIndex;
+            if (applying || i <= 0) return;
+            applying = true;
+            useKb.Checked = true; kb.Value = Kb[i];
+            useSide.Checked = Side[i] > 0;
+            if (Side[i] > 0) side.Value = Side[i];
+            applying = false;
+        };
+        EventHandler edited = (s, e) => { if (!applying) detect(); };
+        useKb.CheckedChanged += edited; kb.ValueChanged += edited;
+        useSide.CheckedChanged += edited; side.ValueChanged += edited;
+        detect();
+        return box;
     }
 }
 
@@ -908,7 +1008,7 @@ class AskForm : Form
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         TopMost = true;
-        ClientSize = new Size(S(300), S(176));
+        ClientSize = new Size(S(300), S(238));
 
         Controls.Add(new Label
         {
@@ -916,21 +1016,27 @@ class AskForm : Form
             AutoSize = true, Location = new Point(S(12), S(12)), Font = new Font("Segoe UI Semibold", 10f),
         });
 
-        var useKb = new CheckBox { Text = "Max file size, KB", Checked = Cfg.TargetKB > 0, AutoSize = true, Location = new Point(S(12), S(48)) };
+        var useKb = new CheckBox { Text = "Max file size, KB", Checked = Cfg.TargetKB > 0, AutoSize = true, Location = new Point(S(12), S(82)) };
         var kb = new NumericUpDown { Minimum = 1, Maximum = 10000000, Value = Cfg.TargetKB > 0 ? Cfg.TargetKB : 490,
-            Bounds = new Rectangle(S(190), S(46), S(98), S(24)), TextAlign = HorizontalAlignment.Right };
-        useKb.CheckedChanged += (s, e) => kb.Enabled = useKb.Checked;
-        kb.Enabled = useKb.Checked;
+            Bounds = new Rectangle(S(190), S(80), S(98), S(24)), TextAlign = HorizontalAlignment.Right };
+        var useSide = new CheckBox { Text = "Max long side, px", Checked = Cfg.MaxSide > 0, AutoSize = true, Location = new Point(S(12), S(112)) };
+        var side = new NumericUpDown { Minimum = 16, Maximum = 100000, Value = Cfg.MaxSide > 0 ? Cfg.MaxSide : 1920,
+            Bounds = new Rectangle(S(190), S(110), S(98), S(24)), TextAlign = HorizontalAlignment.Right };
+        EventHandler sync = (s, e) => { kb.Enabled = useKb.Checked; side.Enabled = useSide.Checked; };
+        useKb.CheckedChanged += sync; useSide.CheckedChanged += sync;
+        sync(null, null);
 
-        var qLabel = new Label { Text = jpg ? "Quality, %" : "Quality (JPG only)", AutoSize = true, Location = new Point(S(12), S(81)) };
+        var presetLabel = new Label { Text = "Preset", AutoSize = true, Location = new Point(S(12), S(50)) };
+        var preset = Presets.Attach(new Rectangle(S(80), S(47), S(208), S(24)), useKb, kb, useSide, side);
+
+        var qLabel = new Label { Text = jpg ? "Quality, %" : "Quality (JPG only)", AutoSize = true, Location = new Point(S(12), S(143)) };
         var q = new NumericUpDown { Minimum = 1, Maximum = 100, Value = Cfg.Quality, Enabled = jpg,
-            Bounds = new Rectangle(S(190), S(78), S(98), S(24)), TextAlign = HorizontalAlignment.Right };
+            Bounds = new Rectangle(S(190), S(140), S(98), S(24)), TextAlign = HorizontalAlignment.Right };
 
-        var noAsk = new CheckBox { Text = "Don't ask again", AutoSize = true, Location = new Point(S(12), S(146)) };
-
-        var ok = new Button { Text = "Convert", Bounds = new Rectangle(S(196), S(110), S(92), S(28)), DialogResult = DialogResult.OK };
-        var cancel = new Button { Text = "Cancel", Bounds = new Rectangle(S(96), S(110), S(92), S(28)), DialogResult = DialogResult.Cancel };
-        Controls.AddRange(new Control[] { useKb, kb, qLabel, q, noAsk, ok, cancel });
+        var ok = new Button { Text = "Convert", Bounds = new Rectangle(S(196), S(176), S(92), S(28)), DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Cancel", Bounds = new Rectangle(S(96), S(176), S(92), S(28)), DialogResult = DialogResult.Cancel };
+        var noAsk = new CheckBox { Text = "Don't ask again", AutoSize = true, Location = new Point(S(12), S(212)) };
+        Controls.AddRange(new Control[] { presetLabel, preset, useKb, kb, useSide, side, qLabel, q, ok, cancel, noAsk });
         AcceptButton = ok;
         CancelButton = cancel;
         ActiveControl = ok;
@@ -939,11 +1045,101 @@ class AskForm : Form
         {
             if (DialogResult != DialogResult.OK) return;
             Cfg.TargetKB = useKb.Checked ? (int)kb.Value : 0;
+            Cfg.MaxSide = useSide.Checked ? (int)side.Value : 0;
             if (jpg) Cfg.Quality = (int)q.Value;
             if (noAsk.Checked) Cfg.Ask = false;
             Cfg.Save(); // remember for next time
         };
         Shown += (s, e) => Activate();
+    }
+}
+
+// ---------- "Done" popup in the bottom-right corner after Explorer conversions ----------
+class Toast : Form
+{
+    readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 6000 };
+
+    // Show on top without stealing focus from whatever the user is doing.
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            cp.ExStyle |= 0x00000008 | 0x00000080 | 0x08000000; // WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+            return cp;
+        }
+    }
+
+    public Toast(List<string> files)
+    {
+        float k;
+        using (var g = CreateGraphics()) k = g.DpiX / 96f;
+        Func<int, int> S = v => (int)Math.Round(v * k);
+
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        BackColor = Color.FromArgb(43, 43, 43);
+        ForeColor = Color.White;
+        Font = new Font("Segoe UI", 9f);
+        ClientSize = new Size(S(340), S(90));
+        var area = Screen.PrimaryScreen.WorkingArea;
+        Location = new Point(area.Right - Width - S(12), area.Bottom - Height - S(12));
+        Paint += (s, e) => { using (var p = new Pen(Color.FromArgb(80, 80, 80))) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1); };
+
+        long total = 0;
+        foreach (var f in files) total += new FileInfo(f).Length;
+        Controls.Add(new PictureBox { Image = Art.Draw(S(32)), Bounds = new Rectangle(S(14), S(14), S(32), S(32)) });
+        Controls.Add(new Label
+        {
+            Text = files.Count == 1 ? Path.GetFileName(files[0]) : files.Count + " images converted",
+            AutoEllipsis = true, Font = new Font("Segoe UI Semibold", 9.5f),
+            Bounds = new Rectangle(S(58), S(12), S(250), S(20)),
+        });
+        Controls.Add(new Label
+        {
+            Text = "Done " + (char)0x2713 + "  " + SizeText(total) + (files.Count > 1 ? " total" : ""),
+            ForeColor = Color.FromArgb(190, 190, 190), Bounds = new Rectangle(S(58), S(33), S(250), S(18)),
+        });
+
+        var show = Link("Show in folder", new Point(S(58), S(60)));
+        show.LinkClicked += (s, e) =>
+        {
+            System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + files[0] + "\"");
+            Close();
+        };
+        var copy = Link(files.Count == 1 ? "Copy file" : "Copy files", new Point(S(170), S(60)));
+        copy.LinkClicked += (s, e) =>
+        {
+            var list = new System.Collections.Specialized.StringCollection();
+            list.AddRange(files.ToArray());
+            Clipboard.SetFileDropList(list); // paste it into a chat, an email or an upload form
+            copy.Text = "Copied " + (char)0x2713;
+        };
+        var close = new Label { Text = "✕", AutoSize = true, Cursor = Cursors.Hand, ForeColor = Color.FromArgb(170, 170, 170),
+                                Location = new Point(S(318), S(8)) };
+        close.Click += (s, e) => Close();
+        Controls.AddRange(new Control[] { show, copy, close });
+
+        // Close after a few seconds, but not while the mouse is over it.
+        timer.Tick += (s, e) => { if (!Bounds.Contains(Cursor.Position)) Close(); };
+        Shown += (s, e) => timer.Start();
+        FormClosed += (s, e) => timer.Dispose();
+    }
+
+    static LinkLabel Link(string text, Point at)
+    {
+        return new LinkLabel
+        {
+            Text = text, AutoSize = true, Location = at,
+            LinkColor = Color.FromArgb(120, 180, 255), ActiveLinkColor = Color.White, LinkBehavior = LinkBehavior.HoverUnderline,
+        };
+    }
+
+    static string SizeText(long bytes)
+    {
+        return bytes >= 1024 * 1024 ? (bytes / 1048576.0).ToString("0.0") + " MB" : Math.Max(1, (bytes + 512) / 1024) + " KB";
     }
 }
 
